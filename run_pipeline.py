@@ -90,6 +90,54 @@ def save_confusion_matrix(cm):
     fig.savefig(f"{OUT}/confusion_matrix.png", dpi=120, bbox_inches="tight"); plt.close(fig)
 
 
+def parameter_sweep(slices):
+    """Phase 1 goal = make the TUMOR stand out from healthy kidney tissue with its border intact.
+    Each setting is applied alone to the windowed image and scored by:
+      tumor_cnr  |mean tumor - mean healthy kidney| / std of healthy kidney  (can we see the tumor?)
+      edge       Sobel gradient on the tumor border relative to the unfiltered window (border kept?)
+      dice       Multi-Otsu segmentation on that image vs ground truth (does it help the end result?)"""
+    grid = {
+        "anisotropic (kappa)": (lambda b, k: preprocess.anisotropic_diffusion(b, kappa=k), [5, 10, 20, 40, 80]),
+        "gaussian (sigma)": (lambda b, k: cv2.GaussianBlur(b, (0, 0), k), [0.5, 1, 1.5, 2.5, 4]),
+        "median (kernel)": (lambda b, k: cv2.medianBlur(b, k), [3, 5, 7, 9]),
+        "butterworth (cutoff)": (lambda b, k: preprocess.butterworth_lowpass(b, cutoff=k), [20, 40, 60, 100, 150]),
+        "clahe (clip limit)": (lambda b, k: cv2.createCLAHE(clipLimit=k, tileGridSize=(8, 8)).apply(b), [1, 2, 3, 5, 8]),
+        "he (no setting)": (lambda b, k: cv2.equalizeHist(b), [0]),
+        "none (windowed only)": (lambda b, k: b, [0]),
+    }
+    usable = [d for d in slices if d["tumor"].sum() >= 100 and (d["kidney"] & ~ndi.binary_dilation(d["tumor"], iterations=3)).sum() >= 100]
+    rows = []
+    for name, (apply, values) in grid.items():
+        for v in values:
+            m = {"tumor_cnr": [], "edge": [], "dice": []}
+            for d in usable:
+                base = preprocess.window_normalize(d["hu"])
+                out = apply(base, v)
+                tumor = d["tumor"]
+                healthy = d["kidney"] & ~ndi.binary_dilation(tumor, iterations=3)
+                border = ndi.binary_dilation(tumor, iterations=2) & ~ndi.binary_erosion(tumor, iterations=2)
+                grad = lambda im: np.hypot(cv2.Sobel(im, cv2.CV_32F, 1, 0), cv2.Sobel(im, cv2.CV_32F, 0, 1))[border].mean()
+                m["tumor_cnr"].append(preprocess.cnr(out, tumor, healthy))
+                m["edge"].append(grad(out) / grad(base))
+                m["dice"].append(segment.dice(segment.segment_otsu(out, d["kidney"]), tumor))
+            rows.append({"filter": name, "value": v, **{k: np.mean(x) for k, x in m.items()}})
+    table = pd.DataFrame(rows).round(3)
+    table.to_csv(f"{OUT}/parameter_sweep.csv", index=False)
+
+    fig, axes = plt.subplots(2, 5, figsize=(18, 7))
+    plain = table[table["filter"] == "none (windowed only)"].iloc[0]
+    for col, (name, g) in zip(range(5), [x for x in table.groupby("filter", sort=False)][:5]):
+        for row, metric in enumerate(("dice", "tumor_cnr")):
+            ax = axes[row, col]
+            ax.plot(g.value, g[metric], "o-")
+            ax.axhline(plain[metric], color="gray", ls="--", label="no filter")
+            ax.set_title(f"{name}\n{metric}", fontsize=9); ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=8)
+    fig.savefig(f"{OUT}/parameter_sweep.png", dpi=110, bbox_inches="tight"); plt.close(fig)
+    print(f"{len(usable)} slices with a measurable tumor")
+    print(table.to_string(index=False))
+
+
 def morphology_demo(slices):
     """Erosion/dilation/opening/closing with custom SEs on a real mask and on two touching discs."""
     d = slices[0]
@@ -154,6 +202,7 @@ def main():
     print(json.dumps(result, indent=2, default=float))
     json.dump(result, open(f"{OUT}/metrics.json", "w"), indent=2, default=float)
     save_figures(slices, best)
+    parameter_sweep(slices)
     morphology_demo(slices)
     robustness_test(slices, best)
     export_test_images(slices, result["test_cases"])
