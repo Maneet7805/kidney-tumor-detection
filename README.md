@@ -1,4 +1,4 @@
-# RenalScope
+# Kidney Tumor Hunter
 
 **Classical computer-vision pipeline for kidney tumor detection in abdominal CT (KiTS23).**
 No deep learning, no pre-trained models: windowing, filtering, morphology, thresholding, region growing, texture features and a Random Forest.
