@@ -4,6 +4,7 @@ import json
 import os
 
 import cv2
+import joblib
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -143,7 +144,7 @@ def main():
 
     X, y, cases = classify.build_dataset(SLICE_DIR, best)
     result = classify.train_and_evaluate(X, y, cases)
-    result.pop("model")
+    joblib.dump(result.pop("model"), f"{OUT}/model.joblib")  # trained Random Forest, used by app.py
     pd.DataFrame(X, columns=classify.FEATURE_NAMES).assign(case=cases, tumor=y).to_csv(f"{OUT}/glcm_feature_table.csv", index=False)
     pd.DataFrame(X, columns=classify.FEATURE_NAMES).assign(label=np.where(y == 1, "tumor", "healthy"))         .groupby("label").mean().round(3).T.to_csv(f"{OUT}/feature_means_by_class.csv")
     save_confusion_matrix(result["confusion_matrix"])

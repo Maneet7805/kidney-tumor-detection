@@ -1,7 +1,9 @@
-"""Tkinter prototype (brief 7.2): browse CT slices, segment the tumor, view overlays and metrics.
+"""Tkinter prototype (brief 7.2). One tab per phase of the assignment workflow:
+
+  Raw CT slice -> Phase 1 Enhancement -> Phase 2 Segmentation -> Phase 3 Recognition -> Diagnostic class
 
 Overlay colours: PREDICTED = red contour, GROUND TRUTH = green contour.
-Run:  python app.py
+Run:  python app.py   (run run_pipeline.py once first: it creates results/metrics.json and results/model.joblib)
 """
 import glob
 import json
@@ -9,15 +11,19 @@ import os
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+import joblib
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from skimage.measure import label
 
 import classify
 import preprocess
 import segment
 
 METRICS_FILE = os.path.join("results", "metrics.json")
+MODEL_FILE = os.path.join("results", "model.joblib")
+TABS = ["Overview", "Phase 1: Enhancement", "Phase 2: Segmentation", "Phase 3: Recognition"]
 
 
 def load_slice(path):
@@ -26,23 +32,31 @@ def load_slice(path):
     return {"hu": d["hu"], "kidney": d["kidney"].astype(bool), "tumor": d["tumor"].astype(bool)}
 
 
-def read_metrics():
-    """Return classification metrics from results/metrics.json, or None if not available."""
+def load_optional(loader, path):
+    """Metrics / model files only exist after run_pipeline.py; return None if missing."""
     try:
-        with open(METRICS_FILE) as f:
-            return json.load(f)
+        return loader(path)
     except (OSError, ValueError):
         return None
+
+
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def contour(ax, mask, colour):
+    if mask.any():  # contour() warns on an empty mask
+        ax.contour(mask.astype(float), levels=[0.5], colors=colour, linewidths=1.2)
 
 
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("KiTS23 Tumor Segmentation Prototype")
-        self.files = []      # list of .npz paths
-        self.index = 0
-        self.dices = {}      # file path -> Dice, used for the mean
-        self.current = None  # (slice dict, enhanced image, predicted mask) of the slice on screen
+        root.title("KiTS23 Tumor Detection Prototype")
+        self.files, self.index, self.dices = [], 0, {}
+        self.metrics = load_optional(read_json, METRICS_FILE)
+        self.model = load_optional(joblib.load, MODEL_FILE)
 
         # ---- left control panel ----
         side = ttk.Frame(root, padding=8)
@@ -55,22 +69,23 @@ class App:
         ttk.Button(nav, text="Next >", command=lambda: self.step(1)).pack(side=tk.LEFT, expand=True)
         self.name_label = ttk.Label(side, text="No slice loaded", wraplength=180)
         self.name_label.pack(pady=2)
-
-        ttk.Button(side, text="Show pipeline stages", command=self.show_stages).pack(fill=tk.X, pady=(10, 0))
         ttk.Label(side, text="Segmentation method:").pack(anchor=tk.W, pady=(10, 0))
         self.method = tk.StringVar(value="otsu")
-        box = ttk.Combobox(side, textvariable=self.method, state="readonly",
-                           values=["otsu", "region_growing"])
+        box = ttk.Combobox(side, textvariable=self.method, state="readonly", values=["otsu", "region_growing"])
         box.pack(fill=tk.X)
         box.bind("<<ComboboxSelected>>", lambda e: self.show())
+        self.info_label = ttk.Label(side, justify=tk.LEFT, font=("Consolas", 10))
+        self.info_label.pack(anchor=tk.W, pady=15)
 
-        self.metrics_label = ttk.Label(side, justify=tk.LEFT, font=("Consolas", 10))
-        self.metrics_label.pack(anchor=tk.W, pady=15)
-
-        # ---- right: matplotlib figure with 4 panels ----
-        self.fig = Figure(figsize=(10, 8))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # ---- right: one tab (matplotlib figure) per phase ----
+        notebook = ttk.Notebook(root)
+        notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvases = {}
+        for name in TABS:
+            fig = Figure(figsize=(11, 8))
+            canvas = FigureCanvasTkAgg(fig, master=notebook)
+            notebook.add(canvas.get_tk_widget(), text=name)
+            self.canvases[name] = canvas
         self.show()
 
     # ---------- loading ----------
@@ -93,125 +108,188 @@ class App:
             self.index = (self.index + delta) % len(self.files)
             self.show()
 
-    # ---------- drawing ----------
+    # ---------- run the pipeline on the current slice and redraw every tab ----------
     def show(self):
-        self.fig.clear()
+        for canvas in self.canvases.values():
+            canvas.figure.clear()
         if not self.files:
-            self.fig.text(0.5, 0.5, "Load an image or a folder of .npz slices", ha="center")
-            self.update_metrics(None)
-            self.canvas.draw()
+            for canvas in self.canvases.values():
+                canvas.figure.text(0.5, 0.5, "Load an image or a folder of .npz slices", ha="center")
+                canvas.draw()
+            self.info_label.config(text="")
             return
 
         path = self.files[self.index]
         s = load_slice(path)
+        base = preprocess.window_normalize(s["hu"])
         enhanced = preprocess.enhance(s["hu"])
-        pred = segment.segment_tumor(enhanced, s["kidney"], self.method.get()).astype(bool)
-        gt = s["tumor"]
-        dice = segment.dice(pred, gt)
+        preds = {m: segment.segment_tumor(enhanced, s["kidney"], m).astype(bool) for m in ("otsu", "region_growing")}
+        pred = preds[self.method.get()]
+        dice = segment.dice(pred, s["tumor"])
         self.dices[path] = dice
-        self.current = (s, enhanced, pred)  # kept for the pipeline-stages window
-        self.name_label.config(text=f"{os.path.basename(path)}\n({self.index + 1}/{len(self.files)})")
 
-        # (title, predicted mask, ground-truth mask) for each overlay panel; None = not drawn
-        panels = [("Tumor only", pred, gt),
-                  ("Kidney only (ground truth)", None, s["kidney"]),
-                  ("Kidney + tumor", pred, s["kidney"])]
-        ax = self.fig.add_subplot(2, 2, 1)
+        ys, xs = np.where(s["kidney"])  # crop every picture to the kidneys so details are visible
+        box = (slice(max(ys.min() - 30, 0), ys.max() + 30), slice(max(xs.min() - 30, 0), xs.max() + 30))
+        ctx = dict(s=s, base=base, enhanced=enhanced, preds=preds, pred=pred, box=box)
+
+        self.draw_overview(self.canvases[TABS[0]].figure, ctx)
+        self.draw_phase1(self.canvases[TABS[1]].figure, ctx)
+        self.draw_phase2(self.canvases[TABS[2]].figure, ctx)
+        diagnosis = self.draw_phase3(self.canvases[TABS[3]].figure, ctx)
+        for name, canvas in self.canvases.items():
+            if name != TABS[3]:  # the Phase 3 tab has a manually placed inset, so no tight_layout there
+                canvas.figure.tight_layout()
+            canvas.draw()
+        self.name_label.config(text=f"{os.path.basename(path)}\n({self.index + 1}/{len(self.files)})")
+        self.update_info(dice, diagnosis)
+
+    # ---------- Overview: the 4 views required by brief 7.2 ----------
+    def draw_overview(self, fig, c):
+        s, enhanced, pred = c["s"], c["enhanced"], c["pred"]
+        ax = fig.add_subplot(2, 2, 1)
         ax.imshow(pred, cmap="gray")
         ax.set_title(f"Segmented tumor mask ({self.method.get()})")
-        ax.axis("off")
-        for i, (title, red, green) in enumerate(panels, start=2):
-            ax = self.fig.add_subplot(2, 2, i)
+        views = [("Tumor only", pred, s["tumor"]), ("Kidney only (ground truth)", None, s["kidney"]),
+                 ("Kidney + tumor", pred, s["kidney"])]
+        for i, (title, red, green) in enumerate(views, start=2):
+            ax = fig.add_subplot(2, 2, i)
             ax.imshow(enhanced, cmap="gray")
-            self.contour(ax, green, "lime")
+            contour(ax, green, "lime")
             if red is not None:
-                self.contour(ax, red, "red")
-            if title.startswith("Kidney +"):
-                self.contour(ax, gt, "lime")   # ground-truth tumor too
+                contour(ax, red, "red")
+            if title == "Kidney + tumor":
+                contour(ax, s["tumor"], "lime")
             ax.set_title(title + "  (red=pred, green=GT)")
+        for ax in fig.axes:
             ax.axis("off")
-        self.fig.tight_layout()
-        self.canvas.draw()
-        self.update_metrics(dice)
 
-    def show_stages(self):
-        """Second window: every algorithm stage for the current slice (what the demo video explains)."""
-        if self.current is None:
-            return
-        s, enhanced, pred = self.current
-        base = preprocess.window_normalize(s["hu"])
-        ys, xs = np.where(s["kidney"])
-        box = (slice(max(ys.min() - 30, 0), ys.max() + 30), slice(max(xs.min() - 30, 0), xs.max() + 30))
+    # ---------- Phase 1: original -> enhanced, with every compared algorithm ----------
+    def draw_phase1(self, fig, c):
+        s, base, box = c["s"], c["base"], c["box"]
         roi = s["kidney"]
         ring = np.zeros_like(roi)
         ring[box] = True
         ring &= ~roi
 
-        def tag(img):  # PSNR against the windowed image, CNR kidney vs surrounding tissue
-            return f"PSNR {preprocess.psnr(base, img):.1f}  CNR {preprocess.cnr(img, roi, ring):.2f}"
+        def score(img):  # PSNR vs the windowed image, CNR between kidney and surrounding tissue
+            return f"PSNR {preprocess.psnr(base, img):.1f} dB | CNR {preprocess.cnr(img, roi, ring):.2f}"
 
-        phase1 = [("1. HU window [-160,240]", base, f"CNR {preprocess.cnr(base, roi, ring):.2f}"),
-                  ("2a. Anisotropic diffusion", preprocess.denoise(base, "anisotropic"), None),
-                  ("2b. Gaussian", preprocess.denoise(base, "gaussian"), None),
-                  ("2c. Median", preprocess.denoise(base, "median"), None),
-                  ("3a. CLAHE", preprocess.enhance_contrast(base, "clahe"), None),
-                  ("3b. Histogram equalization", preprocess.enhance_contrast(base, "he"), None),
-                  ("4a. Log-magnitude DFT", preprocess.log_spectrum(base), "no crop"),
-                  ("4b. Butterworth low-pass", preprocess.butterworth_lowpass(base), None)]
-        raw = segment.segment_otsu_raw(enhanced, s["kidney"])
-        phase2 = [("Phase 1 result (used below)", enhanced, tag(enhanced)),
-                  ("Multi-Otsu dark class (raw)", raw, None),
-                  ("After morphology = Strategy A", segment.segment_tumor(enhanced, s["kidney"], "otsu"), None),
-                  ("Region growing = Strategy B", segment.segment_tumor(enhanced, s["kidney"], "region_growing"), None)]
-
-        win = tk.Toplevel(self.root)
-        win.title("Pipeline stages")
-        fig = Figure(figsize=(14, 10))
-        for i, (title, img, note) in enumerate(phase1 + phase2):
-            ax = fig.add_subplot(4, 4, i + 1)
-            ax.imshow(img if note == "no crop" else img[box], cmap="gray")
-            if title.startswith(("2", "3", "4b")):
-                note = tag(img)
-            ax.set_title(f"{title}\n{note}" if note and note != "no crop" else title, fontsize=9)
+        raw = np.clip(s["hu"], -1000, 1000)
+        panels = [
+            ("ORIGINAL raw CT (full HU range)", raw, ""),
+            ("Step 1: window [-160,240] HU -> 0-255", base, f"CNR {preprocess.cnr(base, roi, ring):.2f}"),
+            ("Step 2a: anisotropic diffusion (CHOSEN)", preprocess.denoise(base, "anisotropic"), None),
+            ("Step 2b: Gaussian", preprocess.denoise(base, "gaussian"), None),
+            ("Step 2c: median", preprocess.denoise(base, "median"), None),
+            ("Step 3a: CLAHE (CHOSEN)", preprocess.enhance_contrast(base, "clahe"), None),
+            ("Step 3b: histogram equalization", preprocess.enhance_contrast(base, "he"), None),
+            ("Step 4a: log-magnitude 2D DFT", preprocess.log_spectrum(base), "full image"),
+            ("Step 4b: Butterworth low-pass (CHOSEN)", preprocess.butterworth_lowpass(base), None),
+            ("PHASE 1 OUTPUT (chain: 1 -> 2a -> 4b -> 3a)", c["enhanced"], None),
+        ]
+        for i, (title, img, note) in enumerate(panels, start=1):
+            ax = fig.add_subplot(3, 4, i)
+            ax.imshow(img if note in ("full image", "") else img[box], cmap="gray")
+            note = score(img) if note is None else ("" if note == "full image" else note)
+            ax.set_title(f"{title}\n{note}".strip(), fontsize=8)
             ax.axis("off")
-        # bottom row: Phase 3 feature values of the predicted region, 4 per line
-        ax = fig.add_subplot(4, 1, 4)
+
+    # ---------- Phase 2: both segmentation strategies and their overlap scores ----------
+    def draw_phase2(self, fig, c):
+        s, enhanced, box = c["s"], c["enhanced"], c["box"]
+        raw = segment.segment_otsu_raw(enhanced, s["kidney"])
+        ax = fig.add_subplot(2, 3, 1)
+        ax.imshow(enhanced[box], cmap="gray")
+        contour_box = s["kidney"][box]
+        contour(ax, contour_box, "yellow")
+        ax.set_title("Input: Phase 1 output\n(yellow = kidney search region)", fontsize=9)
+        ax = fig.add_subplot(2, 3, 2)
+        ax.imshow(raw[box], cmap="gray")
+        ax.set_title("Multi-Otsu: darkest class\n(before morphology)", fontsize=9)
+        ax = fig.add_subplot(2, 3, 3)
+        ax.imshow(s["tumor"][box], cmap="gray")
+        ax.set_title("Ground truth tumor mask", fontsize=9)
+        for k, (name, key) in enumerate([("Strategy A: Multi-Otsu + morphology", "otsu"),
+                                         ("Strategy B: seeded region growing", "region_growing")]):
+            pred = c["preds"][key]
+            ax = fig.add_subplot(2, 3, 4 + k)
+            ax.imshow(enhanced[box], cmap="gray")
+            contour(ax, s["tumor"][box], "lime")
+            contour(ax, pred[box], "red")
+            ax.set_title(f"{name}\nDice {segment.dice(pred, s['tumor']):.3f} | IoU {segment.iou(pred, s['tumor']):.3f}"
+                         "\n(red=pred, green=GT)", fontsize=9)
+        for ax in fig.axes:
+            ax.axis("off")
+
+    # ---------- Phase 3: features -> classifier -> diagnostic class ----------
+    def draw_phase3(self, fig, c):
+        """Returns the slice-level diagnosis string (also shown in the side panel)."""
+        s, enhanced, pred, box = c["s"], c["enhanced"], c["pred"], c["box"]
+        parts = label(pred)
+        regions = [parts == i for i in range(1, parts.max() + 1) if (parts == i).sum() >= segment.MIN_TUMOR_PIXELS]
+
+        ax = fig.add_subplot(1, 3, 1)
+        ax.imshow(enhanced[box], cmap="gray")
+        contour(ax, s["tumor"][box], "lime")
+        lines, diagnosis = [], "No candidate region found"
+        for n, region in enumerate(regions, start=1):
+            contour(ax, region[box], "red")
+            ys, xs = np.where(region[box])
+            ax.text(xs.mean(), ys.min() - 3, f"R{n}", color="red", ha="center", fontsize=10)
+            features = classify.extract_features(enhanced, s["hu"], region)
+            truth = "TUMOR/CYST" if s["tumor"][region].mean() >= 0.5 else "HEALTHY"
+            if self.model is None:
+                lines.append(f"R{n}: run run_pipeline.py first (no classifier yet)")
+                continue
+            prob = self.model.predict_proba(features[None, :])[0, 1]
+            label_text = "TUMOR/CYST" if prob >= 0.5 else "HEALTHY"
+            lines.append(f"R{n}: classifier says {label_text} (p={prob:.2f})  | ground truth: {truth}")
+            if prob >= 0.5:
+                diagnosis = "TUMOR/CYST detected"
+            elif diagnosis == "No candidate region found":
+                diagnosis = "Healthy (no tumor found)"
+        ax.set_title("Candidate regions (red) vs GT tumor (green)", fontsize=9)
+        ax.set_anchor("N")
         ax.axis("off")
-        if pred.sum() >= segment.MIN_TUMOR_PIXELS:
-            f = classify.extract_features(enhanced, s["hu"], pred)
-            items = [f"{n}: {v:.3g}" for n, v in zip(classify.FEATURE_NAMES, f)]
-            text = "Phase 3 features of the predicted region (input to the Random Forest)\n" + "\n".join(
-                "   |   ".join(items[k:k + 4]) for k in range(0, len(items), 4))
+
+        # middle: the feature values of the first region (the classifier's input vector)
+        ax = fig.add_subplot(1, 3, 2)
+        ax.axis("off")
+        if regions:
+            f = classify.extract_features(enhanced, s["hu"], regions[0])
+            text = "Feature vector of R1\n(input to Random Forest)\n\n" + "\n".join(
+                f"{n:<21}{v:>10.3f}" for n, v in zip(classify.FEATURE_NAMES, f))
         else:
-            text = "Phase 3: no tumor region predicted"
-        ax.text(0.5, 0.5, text, ha="center", va="center", family="monospace", fontsize=9)
-        fig.tight_layout()
-        canvas = FigureCanvasTkAgg(fig, master=win)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        canvas.draw()
-        fig.savefig("results/pipeline_stages.png", dpi=110)
+            text = "No region to describe"
+        ax.text(0, 1, text, va="top", family="monospace", fontsize=8)
 
-    @staticmethod
-    def contour(ax, mask, colour):
-        if mask.any():  # contour() warns on an empty mask
-            ax.contour(mask.astype(float), levels=[0.5], colors=colour, linewidths=1.2)
+        # right: DIAGNOSTIC CLASS and the overall test-set confusion matrix
+        ax = fig.add_subplot(1, 3, 3)
+        ax.axis("off")
+        ax.text(0, 1, "DIAGNOSTIC CLASS:\n" + diagnosis + "\n\n" + "\n".join(lines), va="top", fontsize=9, wrap=True)
+        if self.metrics:
+            cm = np.array(self.metrics["confusion_matrix"])
+            inset = fig.add_axes([0.72, 0.1, 0.22, 0.3])
+            inset.imshow(cm, cmap="Blues")
+            for (i, j), v in np.ndenumerate(cm):
+                inset.text(j, i, v, ha="center", va="center", fontsize=12)
+            inset.set_xticks([0, 1], ["healthy", "tumor"], fontsize=8)
+            inset.set_yticks([0, 1], ["healthy", "tumor"], fontsize=8)
+            inset.set_xlabel("predicted", fontsize=8)
+            inset.set_ylabel("actual", fontsize=8)
+            inset.set_title("Confusion matrix (test set)", fontsize=8)
+        return diagnosis
 
-    def update_metrics(self, dice):
-        lines = []
-        if dice is not None:
-            lines.append(f"Dice (slice): {dice:.3f}")
-            lines.append(f"Dice (mean):  {np.mean(list(self.dices.values())):.3f}")
-            lines.append(f"  over {len(self.dices)} viewed slice(s)")
-        m = read_metrics()
-        lines.append("")
+    def update_info(self, dice, diagnosis):
+        lines = [f"Diagnosis:\n  {diagnosis}", "", f"Dice (slice): {dice:.3f}",
+                 f"Dice (mean):  {np.mean(list(self.dices.values())):.3f}", f"  over {len(self.dices)} viewed slice(s)", ""]
+        m = self.metrics
         if m is None:
             lines.append("Classifier metrics:\n  run run_pipeline.py\n  to create metrics.json")
         else:
             lines.append("Classifier (test set):")
-            for key in ("accuracy", "f1", "recall", "specificity"):
-                if key in m:
-                    lines.append(f"  {key:<12}{m[key]:.3f}")
-        self.metrics_label.config(text="\n".join(lines))
+            lines += [f"  {k:<12}{m[k]:.3f}" for k in ("accuracy", "f1", "recall", "specificity") if k in m]
+        self.info_label.config(text="\n".join(lines))
 
 
 if __name__ == "__main__":

@@ -73,7 +73,7 @@ The 72 extracted slices are already in `data/slices`, so you can skip the downlo
 
 ## Prototype app
 
-`python app.py` opens a window to load one slice or a folder, pick the segmentation method, and view the mask, tumor overlay, kidney overlay and a combined view (predicted red, ground truth green), with Dice per slice and the classifier metrics. The **Show pipeline stages** button opens every algorithm step for the current slice (windowing, three denoisers, CLAHE vs HE, DFT, Butterworth, Multi-Otsu, morphology, region growing, and the Phase 3 feature values); see `results/pipeline_stages.png`.
+`python app.py` opens a window to load one slice or a folder, pick the segmentation method, and view the mask, tumor overlay, kidney overlay and a combined view (predicted red, ground truth green), with Dice per slice and the classifier metrics. It has one tab per phase: Overview, Phase 1 Enhancement (original -> enhanced with every compared algorithm), Phase 2 Segmentation (both strategies with Dice/IoU), Phase 3 Recognition (features, classifier, diagnostic class). Run `run_pipeline.py` first so the app can load the trained classifier.
 
 ## Repository layout
 
