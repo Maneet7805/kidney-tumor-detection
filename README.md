@@ -85,7 +85,8 @@ The 72 extracted slices are already in `data/slices`, so you can skip the downlo
 | `run_pipeline.py` | End-to-end run, tables and figures |
 | `prepare_data.py` | KiTS23 download and slice extraction |
 | `app.py` | Prototype GUI |
-| `results/` | Figures and CSV/JSON metrics |
+| `test_pipeline.py` | Automated tests (`python -m pytest -q`), also run by GitHub Actions on every PR |
+| `results/` | Figures and CSV/JSON metrics, incl. `parameter_sweep.csv/png` (Phase 1 setting justification) |
 | `data/slices/` | Extracted CT slices (`.npz`) |
 | `test_images/` | Held-out test slices as PNG |
 
