@@ -12,7 +12,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 
 ## Our algorithm choices (assumptions made while user was away; change here + in code if groupmates clash)
 - Cases: KiTS23 case_00100 .. case_00111 (assumed disjoint from groupmates).
-- Phase 1: HU window (soft tissue, 40 +/- 200 -> [-160,240]) -> normalize [0,255]; Anisotropic diffusion (Perona-Malik) compared vs Gaussian and Median; CLAHE compared vs global Histogram Equalization; Butterworth lowpass (frequency domain); PSNR + CNR.
+- Phase 1: HU window (soft tissue, 40 +/- 200 -> [-160,240]) -> normalize [0,255]; Anisotropic diffusion (Perona-Malik) compared vs Gaussian and Median; CLAHE compared vs global Histogram Equalization (compared only: CLAHE amplifies noise and lowers Dice, so it is NOT in the final chain); Butterworth lowpass (frequency domain); PSNR + CNR. Final chain = window -> anisotropic -> Butterworth.
 - Phase 2: custom structuring elements (opening/closing); Strategy A = Multi-Otsu inside kidney ROI; Strategy B = seeded region growing from centroid of the darkest/least-enhancing Otsu class; Dice + IoU vs ground truth.
   Tumor search region = ground-truth kidney mask dilated slightly (tumor members assume the kidney is already localized by the kidney members).
 - Phase 3: shape + GLCM (4 angles) + first-order HU features; classifier = Random Forest (sklearn); Healthy kidney tissue vs Tumor/Cyst; confusion matrix, accuracy, sensitivity, specificity, F1.
@@ -36,7 +36,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 - `preprocess.denoise(img_u8, method="anisotropic"|"gaussian"|"median") -> uint8`
 - `preprocess.enhance_contrast(img_u8, method="clahe"|"he") -> uint8`
 - `preprocess.butterworth_lowpass(img_u8, cutoff=60, order=2) -> uint8`
-- `preprocess.enhance(hu) -> uint8` (full chosen Phase 1 chain)
+- `preprocess.enhance(hu) -> uint8` (final Phase 1 chain: window -> anisotropic -> Butterworth, no CLAHE)
 - `segment.segment_tumor(enhanced_u8, kidney_mask, method="otsu"|"region_growing") -> bool mask`
 - `segment.dice(pred, gt) -> float`, `segment.iou(pred, gt) -> float`
 - `classify.extract_features(enhanced_u8, hu, mask) -> 1D np.ndarray`
@@ -49,9 +49,9 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 - Commit small and often; only the main session pushes. Other sessions: do not commit, do not touch files outside your assignment.
 - Report (~5000 words, APA refs), slides and video are done by the human; keep `results/` ready to paste in.
 
-## Status (2026-11-12)
+## Status (2026-11-13)
 - Done: data (12 cases x 6 slices, cases 100-112 minus 106), Phases 1-3, `run_pipeline.py`, `app.py`, results in `results/`.
-- Latest run: Otsu Dice 0.33 / IoU 0.23 (region growing Dice 0.26); classifier acc 0.93, recall 0.50, specificity 1.0, F1 0.67 (held-out cases).
+- Latest run (chain without CLAHE): region growing Dice 0.353 / IoU 0.289 (best; held-out cases 0.290), Otsu Dice 0.347 / IoU 0.269; classifier (region-growing masks) acc 0.946, recall 1.0, specificity 0.938, F1 0.818 (held-out cases, only 9 tumor regions).
 - Known weakness (use in report critical analysis): tumors with HU similar to or brighter than parenchyma (cases 100, 103, 110) and tiny tumors fail; `DARK_PREFERENCE` in `segment.py` was tuned on the same slices.
-- Also in `results/`: morphology_demo.png, robustness.csv (Dice stays ~0.33 under noise/brightness/contrast shifts), confusion_matrix.png, GLCM feature tables; `test_images/` = PNGs of held-out test slices (cases 104,107,111,112). `app.py` smoke-tested on real slices.
+- Also in `results/`: morphology_demo.png, robustness.csv (Dice stays ~0.35 under noise/brightness/contrast shifts), confusion_matrix.png, GLCM feature tables; `test_images/` = PNGs of held-out test slices (cases 104,107,111,112). `app.py` smoke-tested on real slices.
 - TODO (human): report (~5000 words), slides, 10-15 min video, contribution matrix, make repo private.
