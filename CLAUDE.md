@@ -53,4 +53,5 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 - Done: data (12 cases x 6 slices, cases 100-112 minus 106), Phases 1-3, `run_pipeline.py`, `app.py`, results in `results/`.
 - Latest run: Otsu Dice 0.33 / IoU 0.23 (region growing Dice 0.26); classifier acc 0.93, recall 0.50, specificity 1.0, F1 0.67 (held-out cases).
 - Known weakness (use in report critical analysis): tumors with HU similar to or brighter than parenchyma (cases 100, 103, 110) and tiny tumors fail; `DARK_PREFERENCE` in `segment.py` was tuned on the same slices.
+- Also in `results/`: morphology_demo.png, robustness.csv (Dice stays ~0.33 under noise/brightness/contrast shifts), confusion_matrix.png, GLCM feature tables; `test_images/` = PNGs of held-out test slices (cases 104,107,111,112). `app.py` smoke-tested on real slices.
 - TODO (human): report (~5000 words), slides, 10-15 min video, contribution matrix, make repo private.

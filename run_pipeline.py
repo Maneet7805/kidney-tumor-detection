@@ -3,13 +3,14 @@ import glob
 import json
 import os
 
+import cv2
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import ndimage as ndi
-from skimage.segmentation import find_boundaries
+from skimage.morphology import closing, disk, ellipse, opening
 
 import classify
 import preprocess
@@ -89,6 +90,46 @@ def save_confusion_matrix(cm):
     fig.savefig(f"{OUT}/confusion_matrix.png", dpi=120, bbox_inches="tight"); plt.close(fig)
 
 
+def morphology_demo(slices):
+    """Erosion/dilation/opening/closing with custom SEs on a real mask and on two touching discs."""
+    d = slices[0]
+    raw = segment.segment_otsu_raw(preprocess.enhance(d["hu"]), d["kidney"])
+    yy, xx = np.ogrid[:80, :120]
+    touching = ((yy - 40) ** 2 + (xx - 40) ** 2 < 24 ** 2) | ((yy - 40) ** 2 + (xx - 76) ** 2 < 24 ** 2)
+    ops = {"original": None, "erosion disk(5)": lambda m: ndi.binary_erosion(m, disk(5)),
+           "dilation disk(3)": lambda m: ndi.binary_dilation(m, disk(3)),
+           "opening disk(2)": lambda m: opening(m, disk(2)), "closing ellipse(4,3)": lambda m: closing(m, ellipse(4, 3))}
+    fig, axes = plt.subplots(2, 5, figsize=(16, 6))
+    for row, mask in zip(axes, (raw, touching)):
+        ys, xs = np.where(mask)
+        for ax, (name, op) in zip(row, ops.items()):
+            ax.imshow(mask if op is None else op(mask), cmap="gray"); ax.set_title(name); ax.axis("off")
+            ax.set_xlim(xs.min() - 10, xs.max() + 10); ax.set_ylim(ys.max() + 10, ys.min() - 10)
+    fig.savefig(f"{OUT}/morphology_demo.png", dpi=120, bbox_inches="tight"); plt.close(fig)
+
+
+def robustness_test(slices, method):
+    """Mean Dice when the input CT is perturbed (noise, brightness shift, contrast change)."""
+    rng = np.random.default_rng(0)
+    cases = {"original": lambda h: h, "gaussian noise 20 HU": lambda h: h + rng.normal(0, 20, h.shape),
+             "brightness +30 HU": lambda h: h + 30, "contrast x0.8": lambda h: (h - 40) * 0.8 + 40}
+    rows = [{"perturbation": name, "mean_dice": np.mean([segment.dice(
+        segment.segment_tumor(preprocess.enhance(f(d["hu"])), d["kidney"], method), d["tumor"]) for d in slices])}
+        for name, f in cases.items()]
+    pd.DataFrame(rows).round(3).to_csv(f"{OUT}/robustness.csv", index=False)
+    print(pd.DataFrame(rows).round(3))
+
+
+def export_test_images(slices, test_cases):
+    """Held-out test slices as plain PNGs (windowed CT + ground-truth tumor mask)."""
+    os.makedirs("test_images", exist_ok=True)
+    for d in slices:
+        if int(d["case"]) in test_cases:
+            name = f"test_images/case{int(d['case'])}_z{int(d['z'])}"
+            cv2.imwrite(name + "_ct.png", preprocess.window_normalize(d["hu"]))
+            cv2.imwrite(name + "_tumor_gt.png", d["tumor"].astype(np.uint8) * 255)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     slices = [dict(np.load(p)) for p in sorted(glob.glob(f"{SLICE_DIR}/*.npz"))]
@@ -113,6 +154,9 @@ def main():
     print(json.dumps(result, indent=2, default=float))
     json.dump(result, open(f"{OUT}/metrics.json", "w"), indent=2, default=float)
     save_figures(slices, best)
+    morphology_demo(slices)
+    robustness_test(slices, best)
+    export_test_images(slices, result["test_cases"])
 
 
 if __name__ == "__main__":

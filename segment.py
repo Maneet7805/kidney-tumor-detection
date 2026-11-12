@@ -39,6 +39,12 @@ def _otsu_candidate(img, region):
     return dark if dark.sum() >= DARK_PREFERENCE * bright.sum() else bright
 
 
+def segment_otsu_raw(img, kidney_mask):
+    """Multi-Otsu dark-class mask BEFORE morphology (used to demonstrate the structuring elements)."""
+    low, _ = threshold_multiotsu(img[kidney_mask], classes=3)
+    return kidney_mask & (img < low)
+
+
 def segment_otsu(img, kidney_mask):
     """Strategy A: Multi-Otsu thresholding restricted to the kidney, then morphology."""
     if kidney_mask.sum() < MIN_TUMOR_PIXELS:
