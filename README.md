@@ -29,10 +29,10 @@ Raw CT slice (HU)
 
 | Method | Dice | IoU |
 |---|---|---|
-| Multi-Otsu (A) | 0.347 | 0.269 |
-| Seeded region growing (B) | **0.353** | 0.289 |
+| Multi-Otsu (A) | 0.512 | 0.408 |
+| Seeded region growing (B) | **0.573** | 0.486 |
 
-Dice on the 4 held-out test patients (region growing): 0.290. Region growing barely changes under added noise, a brightness shift or a contrast change (`results/robustness.csv`).
+Dice on the 4 held-out test patients (region growing): 0.608 (0.290 before the Phase 2 sweep; training-slice Dice 0.385 -> 0.555). Region growing barely changes under added noise, a brightness shift or a contrast change (`results/robustness.csv`).
 
 **Classification (held-out patients, 94 regions)**
 
@@ -55,10 +55,22 @@ Dice on the 4 held-out test patients (region growing): 0.290. Region growing bar
 
 Anisotropic diffusion keeps the most structure (highest PSNR) while still raising CNR. CLAHE is not in the final chain: it amplifies noise (lowest PSNR/CNR of the compared steps) and, on the 45 training slices, lowers Dice (Otsu 0.347 with CLAHE vs 0.390 without; region growing 0.244 vs 0.410).
 
+### Phase 2 parameter sweep
+`phase2_sweep` in `run_pipeline.py` varies one setting at a time and scores mean Dice on the training cases only (held-out cases 104, 107, 111, 112 excluded): `results/phase2_sweep.csv` and `results/phase2_sweep.png` (red star = chosen value, region growing).
+
+| Setting | Chosen | Why (training Dice, region growing) |
+|---|---|---|
+| Multi-Otsu classes | 2 | 0.555 vs 0.471 (3) and 0.389 (4): more classes split a tumor from its own rim |
+| `DARK_PREFERENCE` | 0.2 | peak of 0.548 / 0.555 / 0.533 / 0.477 for 0.1 / 0.2 / 0.3 / 0.5 |
+| region growing `tolerance` | 35 | Dice rises steadily 0.319 -> 0.555 from 8 to 35 (edge of grid) |
+| opening disk radius | 3 | 0.404 / 0.517 / 0.532 / 0.555 for 0 to 3: removes more speckle (edge of grid) |
+| closing ellipse | (2, 1) | smallest element is best (0.555 vs 0.495 for (8, 6)): large ones merge neighbours |
+| `MIN_TUMOR_PIXELS` | 30 (unchanged) | 10 / 30 / 60 differ by under 0.002, so no reason to change |
+
 ### Honest limitations
 - Segmentation is hard for classical methods here: tumors whose density matches or exceeds healthy kidney (cases 100, 103, 110) and very small tumors fail.
 - The tumor search runs inside the ground-truth kidney mask (the kidney is assumed to be localized by the kidney half of the project).
-- The dark-versus-bright class preference (`DARK_PREFERENCE` in `segment.py`) was tuned on the same slices it is scored on, so Dice is slightly optimistic.
+- The Phase 2 settings were chosen on training cases only (below), but each was swept one at a time and `tolerance`, opening radius and closing size peak at the edge of the grid, so slightly better values may exist.
 - The held-out set has only 9 tumor regions, so recall 1.00 (4 false positives among 65 healthy regions) is a small-sample estimate.
 
 ## Quick start
@@ -87,7 +99,7 @@ The 72 extracted slices are already in `data/slices`, so you can skip the downlo
 | `prepare_data.py` | KiTS23 download and slice extraction |
 | `app.py` | Prototype GUI |
 | `test_pipeline.py` | Automated tests (`python -m pytest -q`), also run by GitHub Actions on every PR |
-| `results/` | Figures and CSV/JSON metrics, incl. `parameter_sweep.csv/png` (Phase 1 setting justification) |
+| `results/` | Figures and CSV/JSON metrics, incl. `parameter_sweep.csv/png` (Phase 1 setting justification), `phase2_sweep.csv/png` (Phase 2 setting justification) |
 | `data/slices/` | Extracted CT slices (`.npz`) |
 | `test_images/` | Held-out test slices as PNG |
 

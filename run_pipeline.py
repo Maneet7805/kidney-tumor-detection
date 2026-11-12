@@ -138,6 +138,47 @@ def parameter_sweep(slices):
     print(table.to_string(index=False))
 
 
+def phase2_sweep(slices):
+    """Justify the Phase 2 settings (3rd item of each grid entry = value kept in segment.py): vary ONE parameter at a time (others at default) and score the
+    mean Dice/IoU on TRAINING cases only, so the held-out test cases never influence the choice."""
+    test_cases = json.load(open(f"{OUT}/metrics.json"))["test_cases"]
+    train = [d for d in slices if int(d["case"]) not in test_cases]
+    enhanced = [preprocess.enhance(d["hu"]) for d in train]  # enhance once, reused by every setting
+    grid = {
+        "Otsu classes": ("classes", [2, 3, 4], 2),
+        "dark preference": ("dark_pref", [0.1, 0.2, 0.3, 0.5], 0.2),
+        "growing tolerance": ("tolerance", [8, 12, 18, 25, 35], 35),
+        "opening radius": ("open_r", [0, 1, 2, 3], 3),
+        "closing ellipse": ("close_size", [(2, 1), (4, 3), (6, 4), (8, 6)], (2, 1)),
+        "min tumor pixels": ("min_pixels", [10, 30, 60], 30),  # 10 is only 0.002 better (one slice): not worth changing
+    }
+    rows = []
+    for group, (arg, values, _) in grid.items():
+        for v in values:
+            for method in METHODS:
+                if arg == "tolerance" and method == "otsu":
+                    continue  # tolerance only exists in region growing
+                preds = [segment.segment_tumor(e, d["kidney"], method, **{arg: v}) for e, d in zip(enhanced, train)]
+                rows.append({"group": group, "value": str(v), "method": method,
+                             "n_train_slices": len(train),
+                             "dice": np.mean([segment.dice(p, d["tumor"]) for p, d in zip(preds, train)]),
+                             "iou": np.mean([segment.iou(p, d["tumor"]) for p, d in zip(preds, train)])})
+    table = pd.DataFrame(rows).round(4)
+    table.to_csv(f"{OUT}/phase2_sweep.csv", index=False)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 7))
+    for ax, (group, g) in zip(axes.ravel(), table.groupby("group", sort=False)):
+        for method, line in g.groupby("method"):
+            ax.plot(line.value, line.dice, "o-", label=method)
+        chosen = g[(g.method == "region_growing") & (g.value == str(grid[group][2]))].iloc[0]
+        ax.plot(chosen.value, chosen.dice, "r*", ms=16, label="chosen")
+        ax.set_title(group); ax.set_ylabel("train mean Dice"); ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=8)
+    fig.savefig(f"{OUT}/phase2_sweep.png", dpi=110, bbox_inches="tight"); plt.close(fig)
+    print(f"{len(train)} training slices (test cases {test_cases} excluded)")
+    print(table.to_string(index=False))
+
+
 def morphology_demo(slices):
     """Erosion/dilation/opening/closing with custom SEs on a real mask and on two touching discs."""
     d = slices[0]
@@ -203,6 +244,7 @@ def main():
     json.dump(result, open(f"{OUT}/metrics.json", "w"), indent=2, default=float)
     save_figures(slices, best)
     parameter_sweep(slices)
+    phase2_sweep(slices)  # needs metrics.json for the held-out case list
     morphology_demo(slices)
     robustness_test(slices, best)
     export_test_images(slices, result["test_cases"])

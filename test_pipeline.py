@@ -118,3 +118,13 @@ def test_app_builds_and_steps_through_slices():
         a.step(1)
     assert len(a.dices) == 3
     root.destroy()
+
+
+def test_phase2_sweep_covers_groups_and_uses_training_cases_only():
+    import pandas as pd
+    table = pd.read_csv("results/phase2_sweep.csv")
+    assert table["group"].nunique() == 6  # classes, dark preference, tolerance, opening, closing, min pixels
+    assert table[["dice", "iou"]].notna().all().all()
+    test_cases = json.load(open("results/metrics.json"))["test_cases"]
+    train = [p for p in glob.glob("data/slices/*.npz") if int(np.load(p)["case"]) not in test_cases]
+    assert set(table["n_train_slices"]) == {len(train)}  # the sweep scored exactly the non-test slices
