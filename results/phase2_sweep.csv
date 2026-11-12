@@ -1,0 +1,42 @@
+group,value,method,n_train_slices,dice,iou
+Otsu classes,2,otsu,48,0.5158,0.4143
+Otsu classes,2,region_growing,48,0.555,0.4695
+Otsu classes,3,otsu,48,0.3815,0.3032
+Otsu classes,3,region_growing,48,0.4712,0.4
+Otsu classes,4,otsu,48,0.2554,0.1812
+Otsu classes,4,region_growing,48,0.3886,0.3255
+dark preference,0.1,otsu,48,0.4989,0.3997
+dark preference,0.1,region_growing,48,0.5477,0.4619
+dark preference,0.2,otsu,48,0.5158,0.4143
+dark preference,0.2,region_growing,48,0.555,0.4695
+dark preference,0.3,otsu,48,0.4935,0.3965
+dark preference,0.3,region_growing,48,0.5334,0.453
+dark preference,0.5,otsu,48,0.4327,0.3495
+dark preference,0.5,region_growing,48,0.4767,0.4036
+growing tolerance,8,region_growing,48,0.3186,0.2293
+growing tolerance,12,region_growing,48,0.4104,0.3173
+growing tolerance,18,region_growing,48,0.4816,0.3939
+growing tolerance,25,region_growing,48,0.5094,0.4256
+growing tolerance,35,region_growing,48,0.555,0.4695
+opening radius,0,otsu,48,0.4253,0.3329
+opening radius,0,region_growing,48,0.4039,0.3433
+opening radius,1,otsu,48,0.4808,0.3759
+opening radius,1,region_growing,48,0.5173,0.4359
+opening radius,2,otsu,48,0.5176,0.4147
+opening radius,2,region_growing,48,0.532,0.4516
+opening radius,3,otsu,48,0.5158,0.4143
+opening radius,3,region_growing,48,0.555,0.4695
+closing ellipse,"(2, 1)",otsu,48,0.5158,0.4143
+closing ellipse,"(2, 1)",region_growing,48,0.555,0.4695
+closing ellipse,"(4, 3)",otsu,48,0.5148,0.4145
+closing ellipse,"(4, 3)",region_growing,48,0.5405,0.4555
+closing ellipse,"(6, 4)",otsu,48,0.5083,0.4077
+closing ellipse,"(6, 4)",region_growing,48,0.5207,0.4367
+closing ellipse,"(8, 6)",otsu,48,0.4971,0.3983
+closing ellipse,"(8, 6)",region_growing,48,0.495,0.4145
+min tumor pixels,10,otsu,48,0.5063,0.4065
+min tumor pixels,10,region_growing,48,0.5574,0.4736
+min tumor pixels,30,otsu,48,0.5158,0.4143
+min tumor pixels,30,region_growing,48,0.555,0.4695
+min tumor pixels,60,otsu,48,0.5158,0.4143
+min tumor pixels,60,region_growing,48,0.555,0.4695

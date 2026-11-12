@@ -51,7 +51,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 
 ## Status (2026-11-13)
 - Done: data (12 cases x 6 slices, cases 100-112 minus 106), Phases 1-3, `run_pipeline.py`, `app.py`, results in `results/`.
-- Latest run (chain without CLAHE): region growing Dice 0.353 / IoU 0.289 (best; held-out cases 0.290), Otsu Dice 0.347 / IoU 0.269; classifier (region-growing masks) acc 0.946, recall 1.0, specificity 0.938, F1 0.818 (held-out cases, only 9 tumor regions).
-- Known weakness (use in report critical analysis): tumors with HU similar to or brighter than parenchyma (cases 100, 103, 110) and tiny tumors fail; `DARK_PREFERENCE` in `segment.py` was tuned on the same slices.
-- Also in `results/`: morphology_demo.png, robustness.csv (Dice stays ~0.35 under noise/brightness/contrast shifts), confusion_matrix.png, GLCM feature tables; `test_images/` = PNGs of held-out test slices (cases 104,107,111,112). `app.py` smoke-tested on real slices.
+- Latest run (chain without CLAHE): region growing Dice 0.573 / IoU 0.486 (best; held-out cases 0.608), Otsu Dice 0.512 / IoU 0.408; classifier (region-growing masks) acc 0.905, recall 0.882, specificity 0.912, F1 0.811 (held-out cases, only 9 tumor regions).
+- Known weakness (use in report critical analysis): tumors with HU similar to or brighter than parenchyma (cases 100, 103, 110) and tiny tumors fail; Phase 2 settings come from `phase2_sweep` (training cases only, `results/phase2_sweep.csv/png`): Otsu classes 2, `DARK_PREFERENCE` 0.2, tolerance 35, opening disk 3, closing ellipse (2,1), `MIN_TUMOR_PIXELS` 30 (unchanged, 10-60 tie). Tolerance/opening/closing sit at the grid edge. Before the sweep: train Dice 0.385, held-out 0.290.
+- Also in `results/`: morphology_demo.png, robustness.csv (Dice stays ~0.57 under noise/brightness/contrast shifts), confusion_matrix.png, GLCM feature tables; `test_images/` = PNGs of held-out test slices (cases 104,107,111,112). `app.py` smoke-tested on real slices.
 - TODO (human): report (~5000 words), slides, 10-15 min video, contribution matrix, make repo private.

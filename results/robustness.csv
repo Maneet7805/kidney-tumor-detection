@@ -1,5 +1,5 @@
 perturbation,mean_dice
-original,0.353
-gaussian noise 20 HU,0.35
-brightness +30 HU,0.361
-contrast x0.8,0.346
+original,0.573
+gaussian noise 20 HU,0.568
+brightness +30 HU,0.579
+contrast x0.8,0.562
