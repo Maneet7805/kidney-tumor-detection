@@ -6,4 +6,5 @@ denoise_anisotropic,30.736,2.648
 denoise_gaussian,26.562,2.7
 denoise_median,25.672,2.735
 full_chain,25.123,2.881
+homomorphic,13.995,2.148
 original_window,,2.188

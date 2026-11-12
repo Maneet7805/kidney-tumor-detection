@@ -12,7 +12,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 
 ## Our algorithm choices (assumptions made while user was away; change here + in code if groupmates clash)
 - Cases: KiTS23 case_00100 .. case_00111 (assumed disjoint from groupmates).
-- Phase 1: HU window (soft tissue, 40 +/- 200 -> [-160,240]) -> normalize [0,255]; Anisotropic diffusion (Perona-Malik) compared vs Gaussian and Median; CLAHE compared vs global Histogram Equalization (compared only: CLAHE amplifies noise and lowers Dice, so it is NOT in the final chain); Butterworth lowpass (frequency domain); PSNR + CNR. Final chain = window -> anisotropic -> Butterworth.
+- Phase 1: HU window (soft tissue, 40 +/- 200 -> [-160,240]) -> normalize [0,255]; Anisotropic diffusion (Perona-Malik) compared vs Gaussian and Median; CLAHE compared vs global Histogram Equalization (compared only: CLAHE amplifies noise and lowers Dice, so it is NOT in the final chain); Butterworth lowpass and homomorphic filter (frequency domain; homomorphic is compared only, it lowers region-growing Dice, see `results/phase1_chain_check.csv`); PSNR + CNR. Final chain = window -> anisotropic -> Butterworth.
 - Phase 2: custom structuring elements (opening/closing); Strategy A = Multi-Otsu inside kidney ROI; Strategy B = seeded region growing from centroid of the darkest/least-enhancing Otsu class; Dice + IoU vs ground truth.
   Tumor search region = ground-truth kidney mask dilated slightly (tumor members assume the kidney is already localized by the kidney members).
 - Phase 3: shape + GLCM (4 angles) + first-order HU features; classifier = Random Forest (sklearn); Healthy kidney tissue vs Tumor/Cyst; confusion matrix, accuracy, sensitivity, specificity, F1.
@@ -21,7 +21,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 | File | Job |
 |---|---|
 | `prepare_data.py` | Download KiTS23 cases 100-111, extract 2D axial slices to `data/slices/*.npz` |
-| `preprocess.py` | Phase 1: `window_normalize`, `denoise`, `enhance_contrast`, `butterworth_lowpass`, `psnr`, `cnr` |
+| `preprocess.py` | Phase 1: `window_normalize`, `denoise`, `enhance_contrast`, `butterworth_lowpass`, `homomorphic_filter`, `psnr`, `cnr` |
 | `segment.py` | Phase 2: `segment_otsu`, `segment_region_growing`, `refine_mask`, `dice`, `iou` |
 | `classify.py` | Phase 3: `extract_features`, `build_dataset`, `train_and_evaluate` |
 | `run_pipeline.py` | End to end on all slices, writes figures + metrics to `results/` |
@@ -36,6 +36,7 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 - `preprocess.denoise(img_u8, method="anisotropic"|"gaussian"|"median") -> uint8`
 - `preprocess.enhance_contrast(img_u8, method="clahe"|"he") -> uint8`
 - `preprocess.butterworth_lowpass(img_u8, cutoff=60, order=2) -> uint8`
+- `preprocess.homomorphic_filter(img_u8, gamma_low=0.5, gamma_high=1.5, cutoff=6, c=1.0) -> uint8` (illumination correction, not in `enhance`)
 - `preprocess.enhance(hu) -> uint8` (final Phase 1 chain: window -> anisotropic -> Butterworth, no CLAHE)
 - `segment.segment_tumor(enhanced_u8, kidney_mask, method="otsu"|"region_growing") -> bool mask`
 - `segment.dice(pred, gt) -> float`, `segment.iou(pred, gt) -> float`
