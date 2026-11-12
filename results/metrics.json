@@ -1,0 +1,23 @@
+{
+  "accuracy": 0.925531914893617,
+  "recall": 0.5,
+  "specificity": 1.0,
+  "f1": 0.6666666666666666,
+  "cv_accuracy_mean": 0.8915211365211366,
+  "cv_accuracy_std": 0.09382514065625126,
+  "confusion_matrix": [
+    [
+      80,
+      0
+    ],
+    [
+      7,
+      7
+    ]
+  ],
+  "n_train": 175,
+  "n_test": 94,
+  "best_segmentation": "otsu",
+  "mean_dice": 0.3335386678560312,
+  "mean_iou": 0.23088494903427817
+}

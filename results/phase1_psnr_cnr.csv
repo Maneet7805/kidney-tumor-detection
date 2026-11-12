@@ -1,0 +1,9 @@
+method,psnr,cnr
+butterworth,25.536,2.759
+contrast_clahe,20.559,1.755
+contrast_he,19.31,1.613
+denoise_anisotropic,30.736,2.648
+denoise_gaussian,26.562,2.7
+denoise_median,25.672,2.735
+full_chain,19.93,2.211
+original_window,,2.188

@@ -8,6 +8,7 @@ from skimage.morphology import disk, ellipse, opening, closing, remove_small_obj
 from skimage.segmentation import flood
 
 MIN_TUMOR_PIXELS = 30
+DARK_PREFERENCE = 0.3
 
 
 def refine_mask(mask):
@@ -15,30 +16,43 @@ def refine_mask(mask):
     mask = opening(mask, disk(2))
     mask = closing(mask, ellipse(4, 3))
     mask = ndi.binary_fill_holes(mask)
-    return remove_small_objects(mask, MIN_TUMOR_PIXELS)
+    return keep_main_blobs(remove_small_objects(mask, max_size=MIN_TUMOR_PIXELS - 1))
 
 
-def _otsu_dark_class(img, region):
-    """Strategy A core: 3-class Multi-Otsu inside the kidney, keep the darkest class
-    (tumors and cysts enhance less than healthy renal parenchyma)."""
-    thresholds = threshold_multiotsu(img[region], classes=3)
-    return region & (img < thresholds[0])
+def keep_main_blobs(mask, ratio=0.25):
+    """Drop blobs smaller than 25% of the biggest one (sinus fat, noise in the healthy kidney)."""
+    parts = label(mask)
+    if parts.max() == 0:
+        return mask
+    sizes = np.bincount(parts.ravel())[1:]
+    return np.isin(parts, np.where(sizes >= ratio * sizes.max())[0] + 1)
+
+
+def _otsu_candidate(img, region):
+    """Strategy A core: 3-class Multi-Otsu inside the kidney. Tumors are usually darker than
+    healthy parenchyma but in some cases brighter, so build both the darkest- and brightest-class
+    masks and keep the dark one unless it is far smaller (a thin cortical rim is removed by the opening,
+    a real tumor survives)."""
+    low, high = threshold_multiotsu(img[region], classes=3)
+    dark, bright = refine_mask(region & (img < low)), refine_mask(region & (img >= high))
+    # Prefer the dark class (typical); fall back to bright only when dark is much smaller (ratio picked by a small sweep)
+    return dark if dark.sum() >= DARK_PREFERENCE * bright.sum() else bright
 
 
 def segment_otsu(img, kidney_mask):
     """Strategy A: Multi-Otsu thresholding restricted to the kidney, then morphology."""
     if kidney_mask.sum() < MIN_TUMOR_PIXELS:
         return np.zeros_like(kidney_mask)
-    return refine_mask(_otsu_dark_class(img, kidney_mask))
+    return _otsu_candidate(img, kidney_mask)
 
 
 def segment_region_growing(img, kidney_mask, tolerance=18):
     """Strategy B: seeded region growing. The seed is the centroid of the biggest dark blob
-    (from Multi-Otsu); neighbours join while within `tolerance` grey levels of the seed."""
+    (from Multi-Otsu, either tissue class); neighbours join while within `tolerance` grey levels of the seed."""
     empty = np.zeros_like(kidney_mask)
     if kidney_mask.sum() < MIN_TUMOR_PIXELS:
         return empty
-    blobs = label(refine_mask(_otsu_dark_class(img, kidney_mask)))
+    blobs = label(_otsu_candidate(img, kidney_mask))
     if blobs.max() == 0:
         return empty
     biggest = max(regionprops(blobs), key=lambda r: r.area)

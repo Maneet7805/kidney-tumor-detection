@@ -48,3 +48,9 @@ Automated abdominal CT pipeline: Phase 1 enhancement -> Phase 2 segmentation -> 
 - `pip install -r requirements.txt`; everything reproducible from `python prepare_data.py` then `python run_pipeline.py`.
 - Commit small and often; only the main session pushes. Other sessions: do not commit, do not touch files outside your assignment.
 - Report (~5000 words, APA refs), slides and video are done by the human; keep `results/` ready to paste in.
+
+## Status (2026-11-12)
+- Done: data (12 cases x 6 slices, cases 100-112 minus 106), Phases 1-3, `run_pipeline.py`, `app.py`, results in `results/`.
+- Latest run: Otsu Dice 0.33 / IoU 0.23 (region growing Dice 0.26); classifier acc 0.93, recall 0.50, specificity 1.0, F1 0.67 (held-out cases).
+- Known weakness (use in report critical analysis): tumors with HU similar to or brighter than parenchyma (cases 100, 103, 110) and tiny tumors fail; `DARK_PREFERENCE` in `segment.py` was tuned on the same slices.
+- TODO (human): report (~5000 words), slides, 10-15 min video, contribution matrix, make repo private.
