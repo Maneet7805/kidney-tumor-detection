@@ -5,21 +5,21 @@ No deep learning, no pre-trained models: windowing, filtering, morphology, thres
 
 Coursework for *CT036-3-3 Image Processing, Computer Vision and Pattern Recognition* (APU). This repository is the **tumor** part of a group project; the kidney part is done by other group members.
 
-![Predicted (red) vs ground-truth (green) tumor contours](results/overlays_otsu.png)
+![Predicted (red) vs ground-truth (green) tumor contours](results/overlays_region_growing.png)
 *Red = predicted tumor, green = radiologist ground truth.*
 
 ## Pipeline
 
 ```
 Raw CT slice (HU)
-  -> Phase 1  Enhancement   window [-160, 240] HU -> anisotropic diffusion -> Butterworth low-pass -> CLAHE
+  -> Phase 1  Enhancement   window [-160, 240] HU -> anisotropic diffusion -> Butterworth low-pass
   -> Phase 2  Segmentation  morphology (custom SEs) + Multi-Otsu  |  seeded region growing
   -> Phase 3  Recognition   shape + GLCM + HU statistics -> Random Forest -> healthy vs tumor/cyst
 ```
 
 | Phase | Methods compared | Evaluation |
 |---|---|---|
-| 1. Enhancement | Anisotropic diffusion vs Gaussian vs Median; CLAHE vs Histogram Equalization; Butterworth low-pass on the 2D DFT | PSNR, CNR |
+| 1. Enhancement | Anisotropic diffusion vs Gaussian vs Median; CLAHE vs Histogram Equalization (both compared, neither in the final chain); Butterworth low-pass on the 2D DFT | PSNR, CNR |
 | 2. Segmentation | Strategy A: Multi-Otsu. Strategy B: seeded region growing | Dice, IoU vs ground truth |
 | 3. Classification | 15 features (6 shape, 5 GLCM over 4 angles, 4 first-order HU) -> Random Forest | 70/30 split by patient, 5-fold CV, confusion matrix, accuracy, recall, specificity, F1 |
 
@@ -29,16 +29,16 @@ Raw CT slice (HU)
 
 | Method | Dice | IoU |
 |---|---|---|
-| Multi-Otsu (A) | **0.334** | 0.231 |
-| Seeded region growing (B) | 0.257 | 0.183 |
+| Multi-Otsu (A) | 0.347 | 0.269 |
+| Seeded region growing (B) | **0.353** | 0.289 |
 
-Dice on the 4 held-out test patients (Multi-Otsu): 0.350. The method barely changes under added noise, a brightness shift or a contrast change (`results/robustness.csv`).
+Dice on the 4 held-out test patients (region growing): 0.290. Region growing barely changes under added noise, a brightness shift or a contrast change (`results/robustness.csv`).
 
 **Classification (held-out patients, 94 regions)**
 
 | Accuracy | Recall | Specificity | F1 | 5-fold CV accuracy |
 |---|---|---|---|---|
-| 0.926 | 0.500 | 1.000 | 0.667 | 0.892 +/- 0.094 |
+| 0.946 | 1.000 | 0.938 | 0.818 | 0.898 +/- 0.066 |
 
 **Enhancement quality**
 
@@ -51,14 +51,15 @@ Dice on the 4 held-out test patients (Multi-Otsu): 0.350. The method barely chan
 | CLAHE | 20.6 | 1.76 |
 | Histogram Equalization | 19.3 | 1.61 |
 | Butterworth low-pass | 25.5 | 2.76 |
+| **Final chain** (window, diffusion, Butterworth) | 25.1 | 2.88 |
 
-Anisotropic diffusion keeps the most structure (highest PSNR) while still raising CNR.
+Anisotropic diffusion keeps the most structure (highest PSNR) while still raising CNR. CLAHE is not in the final chain: it amplifies noise (lowest PSNR/CNR of the compared steps) and, on the 45 training slices, lowers Dice (Otsu 0.347 with CLAHE vs 0.390 without; region growing 0.244 vs 0.410).
 
 ### Honest limitations
 - Segmentation is hard for classical methods here: tumors whose density matches or exceeds healthy kidney (cases 100, 103, 110) and very small tumors fail.
 - The tumor search runs inside the ground-truth kidney mask (the kidney is assumed to be localized by the kidney half of the project).
 - The dark-versus-bright class preference (`DARK_PREFERENCE` in `segment.py`) was tuned on the same slices it is scored on, so Dice is slightly optimistic.
-- Recall is only 0.50: half of the tumor regions in the held-out set are missed.
+- The held-out set has only 9 tumor regions, so recall 1.00 (4 false positives among 65 healthy regions) is a small-sample estimate.
 
 ## Quick start
 

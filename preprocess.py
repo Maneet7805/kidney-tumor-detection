@@ -5,15 +5,23 @@ import numpy as np
 
 def window_normalize(hu, lo=-160, hi=240):
     """Clip HU to the soft-tissue window and rescale linearly to 0-255."""
+    # 400 HU spread over 256 grey levels, so 1 grey level is about 1.57 HU
     clipped = np.clip(hu, lo, hi)
     return ((clipped - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
 def anisotropic_diffusion(img, iterations=10, kappa=20, gamma=0.2):
-    """Perona-Malik diffusion: smooths flat regions but stops at strong edges."""
+    """Perona-Malik diffusion: smooths flat regions but stops at strong edges.
+
+    kappa is in grey levels (20 is about 31 HU): jumps bigger than this (kidney/tumor edges)
+    are kept, smaller ones (noise) are smoothed. iterations = number of smoothing rounds.
+    gamma must be <= 0.25 for the 4-neighbour scheme to stay stable
+    (Perona & Malik, 1990, IEEE TPAMI 12(7)).
+    """
     out = img.astype(np.float32)
     for _ in range(iterations):
-        # Differences to the 4 neighbours (north, south, east, west)
+        # Differences to the 4 neighbours (north, south, east, west).
+        # np.roll wraps around the border, which is harmless as kidneys are far from the edge.
         diffs = [np.roll(out, s, axis=a) - out for a in (0, 1) for s in (1, -1)]
         # Conduction coefficient is small where the gradient (edge) is large
         out += gamma * sum(d * np.exp(-(d / kappa) ** 2) for d in diffs)
@@ -47,6 +55,8 @@ def log_spectrum(img):
 
 def butterworth_lowpass(img, cutoff=60, order=2):
     """Frequency-domain Butterworth low-pass filter: H = 1 / (1 + (D/D0)^(2n))."""
+    # cutoff (D0) is a distance in frequency pixels from the centre: lower = blurrier.
+    # order (n) sets how sharp the cutoff is: higher = closer to an ideal filter.
     rows, cols = img.shape
     v, u = np.ogrid[:rows, :cols]
     dist = np.sqrt((u - cols / 2) ** 2 + (v - rows / 2) ** 2)
@@ -57,11 +67,14 @@ def butterworth_lowpass(img, cutoff=60, order=2):
 
 
 def enhance(hu):
-    """Full chosen Phase 1 chain: window -> anisotropic diffusion -> Butterworth -> CLAHE."""
+    """Final Phase 1 chain: window -> anisotropic diffusion -> Butterworth.
+
+    CLAHE is left out: on 45 training slices it amplifies noise and lowers Dice
+    (Otsu 0.347 with CLAHE vs 0.390 without; CLAHE alone is the lowest in results/parameter_sweep.csv).
+    """
     img = window_normalize(hu)
     img = denoise(img, "anisotropic")
-    img = butterworth_lowpass(img)
-    return enhance_contrast(img, "clahe")
+    return butterworth_lowpass(img)
 
 
 def psnr(reference, processed):
@@ -88,7 +101,7 @@ if __name__ == "__main__":
     bg = np.ones((128, 128), bool)
     bg[30:100, 30:100] = False  # background = well outside the bright square
     base = window_normalize(fake_hu)
-    # Denoising + low-pass must raise CNR (CLAHE is excluded: it also stretches noise on pure noise)
+    # Denoising + low-pass must raise CNR
     smooth = butterworth_lowpass(denoise(base))
     assert cnr(smooth, roi, bg) > cnr(base, roi, bg)
     print("preprocess self-check OK")

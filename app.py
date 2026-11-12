@@ -189,11 +189,11 @@ class App:
             ("Step 2a: anisotropic diffusion (CHOSEN)", preprocess.denoise(base, "anisotropic"), None),
             ("Step 2b: Gaussian", preprocess.denoise(base, "gaussian"), None),
             ("Step 2c: median", preprocess.denoise(base, "median"), None),
-            ("Step 3a: CLAHE (CHOSEN)", preprocess.enhance_contrast(base, "clahe"), None),
+            ("Step 3a: CLAHE (compared, not in final chain)", preprocess.enhance_contrast(base, "clahe"), None),
             ("Step 3b: histogram equalization", preprocess.enhance_contrast(base, "he"), None),
             ("Step 4a: log-magnitude 2D DFT", preprocess.log_spectrum(base), "full image"),
             ("Step 4b: Butterworth low-pass (CHOSEN)", preprocess.butterworth_lowpass(base), None),
-            ("PHASE 1 OUTPUT (chain: 1 -> 2a -> 4b -> 3a)", c["enhanced"], None),
+            ("PHASE 1 OUTPUT (chain: 1 -> 2a -> 4b)", c["enhanced"], None),
         ]
         for i, (title, img, note) in enumerate(panels, start=1):
             ax = fig.add_subplot(3, 4, i)
