@@ -13,6 +13,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
+import classify
 import preprocess
 import segment
 
@@ -41,6 +42,7 @@ class App:
         self.files = []      # list of .npz paths
         self.index = 0
         self.dices = {}      # file path -> Dice, used for the mean
+        self.current = None  # (slice dict, enhanced image, predicted mask) of the slice on screen
 
         # ---- left control panel ----
         side = ttk.Frame(root, padding=8)
@@ -54,6 +56,7 @@ class App:
         self.name_label = ttk.Label(side, text="No slice loaded", wraplength=180)
         self.name_label.pack(pady=2)
 
+        ttk.Button(side, text="Show pipeline stages", command=self.show_stages).pack(fill=tk.X, pady=(10, 0))
         ttk.Label(side, text="Segmentation method:").pack(anchor=tk.W, pady=(10, 0))
         self.method = tk.StringVar(value="otsu")
         box = ttk.Combobox(side, textvariable=self.method, state="readonly",
@@ -106,6 +109,7 @@ class App:
         gt = s["tumor"]
         dice = segment.dice(pred, gt)
         self.dices[path] = dice
+        self.current = (s, enhanced, pred)  # kept for the pipeline-stages window
         self.name_label.config(text=f"{os.path.basename(path)}\n({self.index + 1}/{len(self.files)})")
 
         # (title, predicted mask, ground-truth mask) for each overlay panel; None = not drawn
@@ -129,6 +133,63 @@ class App:
         self.fig.tight_layout()
         self.canvas.draw()
         self.update_metrics(dice)
+
+    def show_stages(self):
+        """Second window: every algorithm stage for the current slice (what the demo video explains)."""
+        if self.current is None:
+            return
+        s, enhanced, pred = self.current
+        base = preprocess.window_normalize(s["hu"])
+        ys, xs = np.where(s["kidney"])
+        box = (slice(max(ys.min() - 30, 0), ys.max() + 30), slice(max(xs.min() - 30, 0), xs.max() + 30))
+        roi = s["kidney"]
+        ring = np.zeros_like(roi)
+        ring[box] = True
+        ring &= ~roi
+
+        def tag(img):  # PSNR against the windowed image, CNR kidney vs surrounding tissue
+            return f"PSNR {preprocess.psnr(base, img):.1f}  CNR {preprocess.cnr(img, roi, ring):.2f}"
+
+        phase1 = [("1. HU window [-160,240]", base, f"CNR {preprocess.cnr(base, roi, ring):.2f}"),
+                  ("2a. Anisotropic diffusion", preprocess.denoise(base, "anisotropic"), None),
+                  ("2b. Gaussian", preprocess.denoise(base, "gaussian"), None),
+                  ("2c. Median", preprocess.denoise(base, "median"), None),
+                  ("3a. CLAHE", preprocess.enhance_contrast(base, "clahe"), None),
+                  ("3b. Histogram equalization", preprocess.enhance_contrast(base, "he"), None),
+                  ("4a. Log-magnitude DFT", preprocess.log_spectrum(base), "no crop"),
+                  ("4b. Butterworth low-pass", preprocess.butterworth_lowpass(base), None)]
+        raw = segment.segment_otsu_raw(enhanced, s["kidney"])
+        phase2 = [("Phase 1 result (used below)", enhanced, tag(enhanced)),
+                  ("Multi-Otsu dark class (raw)", raw, None),
+                  ("After morphology = Strategy A", segment.segment_tumor(enhanced, s["kidney"], "otsu"), None),
+                  ("Region growing = Strategy B", segment.segment_tumor(enhanced, s["kidney"], "region_growing"), None)]
+
+        win = tk.Toplevel(self.root)
+        win.title("Pipeline stages")
+        fig = Figure(figsize=(14, 10))
+        for i, (title, img, note) in enumerate(phase1 + phase2):
+            ax = fig.add_subplot(4, 4, i + 1)
+            ax.imshow(img if note == "no crop" else img[box], cmap="gray")
+            if title.startswith(("2", "3", "4b")):
+                note = tag(img)
+            ax.set_title(f"{title}\n{note}" if note and note != "no crop" else title, fontsize=9)
+            ax.axis("off")
+        # bottom row: Phase 3 feature values of the predicted region, 4 per line
+        ax = fig.add_subplot(4, 1, 4)
+        ax.axis("off")
+        if pred.sum() >= segment.MIN_TUMOR_PIXELS:
+            f = classify.extract_features(enhanced, s["hu"], pred)
+            items = [f"{n}: {v:.3g}" for n, v in zip(classify.FEATURE_NAMES, f)]
+            text = "Phase 3 features of the predicted region (input to the Random Forest)\n" + "\n".join(
+                "   |   ".join(items[k:k + 4]) for k in range(0, len(items), 4))
+        else:
+            text = "Phase 3: no tumor region predicted"
+        ax.text(0.5, 0.5, text, ha="center", va="center", family="monospace", fontsize=9)
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=win)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        canvas.draw()
+        fig.savefig("results/pipeline_stages.png", dpi=110)
 
     @staticmethod
     def contour(ax, mask, colour):
