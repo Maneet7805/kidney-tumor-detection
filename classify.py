@@ -17,6 +17,9 @@ import segment
 
 ANGLES = [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4]
 LEVELS = 32  # grey levels used for the GLCM
+FEATURE_NAMES = ["area", "perimeter_area_ratio", "circularity", "compactness", "eccentricity", "solidity",
+                 "glcm_energy", "glcm_contrast", "glcm_homogeneity", "glcm_correlation", "glcm_entropy",
+                 "hu_mean", "hu_variance", "hu_skewness", "hu_kurtosis"]
 
 
 def shape_features(mask):
@@ -90,7 +93,8 @@ def train_and_evaluate(X, y, groups, seed=0):
         "f1": 2 * precision * recall / max(precision + recall, 1e-8),
         "cv_accuracy_mean": cv.mean(), "cv_accuracy_std": cv.std(),
         "confusion_matrix": [[int(tn), int(fp)], [int(fn), int(tp)]],
-        "n_train": len(train), "n_test": len(test), "model": model,
+        "n_train": len(train), "n_test": len(test), "test_cases": sorted({int(g) for g in groups[test]}),
+        "model": model,
     }
 
 

@@ -1,0 +1,16 @@
+,healthy,tumor
+area,1250.662,2586.707
+perimeter_area_ratio,0.217,0.173
+circularity,0.585,0.474
+compactness,2.329,2.924
+eccentricity,0.75,0.732
+solidity,0.815,0.757
+glcm_energy,0.132,0.173
+glcm_contrast,3.623,1.681
+glcm_homogeneity,0.557,0.669
+glcm_correlation,0.953,0.951
+glcm_entropy,6.685,5.98
+hu_mean,97.241,54.995
+hu_variance,2942.629,759.576
+hu_skewness,-0.318,0.034
+hu_kurtosis,0.689,0.511

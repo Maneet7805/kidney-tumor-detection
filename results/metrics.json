@@ -17,6 +17,13 @@
   ],
   "n_train": 175,
   "n_test": 94,
+  "test_cases": [
+    104,
+    107,
+    111,
+    112
+  ],
+  "test_mean_dice": 0.350268106149604,
   "best_segmentation": "otsu",
   "mean_dice": 0.3335386678560312,
   "mean_iou": 0.23088494903427817

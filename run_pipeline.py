@@ -78,6 +78,17 @@ def save_figures(slices, method):
     fig.savefig(f"{OUT}/overlays_{method}.png", dpi=120, bbox_inches="tight"); plt.close(fig)
 
 
+def save_confusion_matrix(cm):
+    """Confusion matrix figure for the held-out test regions."""
+    fig, ax = plt.subplots(figsize=(4, 4))
+    ax.imshow(cm, cmap="Blues")
+    for (i, j), v in np.ndenumerate(np.array(cm)):
+        ax.text(j, i, v, ha="center", va="center", fontsize=16)
+    ax.set_xticks([0, 1], ["healthy", "tumor"]); ax.set_yticks([0, 1], ["healthy", "tumor"])
+    ax.set_xlabel("predicted"); ax.set_ylabel("actual")
+    fig.savefig(f"{OUT}/confusion_matrix.png", dpi=120, bbox_inches="tight"); plt.close(fig)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     slices = [dict(np.load(p)) for p in sorted(glob.glob(f"{SLICE_DIR}/*.npz"))]
@@ -92,6 +103,11 @@ def main():
     X, y, cases = classify.build_dataset(SLICE_DIR, best)
     result = classify.train_and_evaluate(X, y, cases)
     result.pop("model")
+    pd.DataFrame(X, columns=classify.FEATURE_NAMES).assign(case=cases, tumor=y).to_csv(f"{OUT}/glcm_feature_table.csv", index=False)
+    pd.DataFrame(X, columns=classify.FEATURE_NAMES).assign(label=np.where(y == 1, "tumor", "healthy"))         .groupby("label").mean().round(3).T.to_csv(f"{OUT}/feature_means_by_class.csv")
+    save_confusion_matrix(result["confusion_matrix"])
+    held_out = seg[(seg.method == best) & seg.case.isin(result["test_cases"])]
+    result["test_mean_dice"] = float(held_out.dice.mean())
     result.update(best_segmentation=best, mean_dice=float(seg[seg.method == best].dice.mean()),
                   mean_iou=float(seg[seg.method == best].iou.mean()))
     print(json.dumps(result, indent=2, default=float))
