@@ -3,7 +3,7 @@
   Raw CT slice -> Phase 1 Enhancement -> Phase 2 Segmentation -> Phase 3 Recognition -> Diagnostic class
 
 Overlay colours: PREDICTED = red contour, GROUND TRUTH = green contour.
-Run:  python app.py   (run run_pipeline.py once first: it creates results/metrics.json and results/model.joblib)
+Run:  python app.py   (run run_pipeline.py once first: it creates results/metrics.json and the feature table)
 """
 import glob
 import json
@@ -11,8 +11,8 @@ import os
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-import joblib
 import numpy as np
+import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from skimage.measure import label
@@ -22,7 +22,7 @@ import preprocess
 import segment
 
 METRICS_FILE = os.path.join("results", "metrics.json")
-MODEL_FILE = os.path.join("results", "model.joblib")
+FEATURE_FILE = os.path.join("results", "glcm_feature_table.csv")
 TABS = ["Overview", "Phase 1: Enhancement", "Phase 2: Segmentation", "Phase 3: Recognition"]
 
 
@@ -38,6 +38,14 @@ def load_optional(loader, path):
         return loader(path)
     except (OSError, ValueError):
         return None
+
+
+def train_classifier(path):
+    """Rebuild the Random Forest from the saved feature table (same data and seed as run_pipeline.py).
+    Retraining takes about a second and avoids loading a pickle file, which could run arbitrary code."""
+    table = pd.read_csv(path)
+    X = table[classify.FEATURE_NAMES].to_numpy()
+    return classify.train_and_evaluate(X, table["tumor"].to_numpy(), table["case"].to_numpy())["model"]
 
 
 def read_json(path):
@@ -56,7 +64,7 @@ class App:
         root.title("KiTS23 Tumor Detection Prototype")
         self.files, self.index, self.dices = [], 0, {}
         self.metrics = load_optional(read_json, METRICS_FILE)
-        self.model = load_optional(joblib.load, MODEL_FILE)
+        self.model = load_optional(train_classifier, FEATURE_FILE)
 
         # ---- left control panel ----
         side = ttk.Frame(root, padding=8)
