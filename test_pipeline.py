@@ -128,3 +128,39 @@ def test_phase2_sweep_covers_groups_and_uses_training_cases_only():
     test_cases = json.load(open("results/metrics.json"))["test_cases"]
     train = [p for p in glob.glob("data/slices/*.npz") if int(np.load(p)["case"]) not in test_cases]
     assert set(table["n_train_slices"]) == {len(train)}  # the sweep scored exactly the non-test slices
+
+
+def test_homomorphic_filter_shape_dtype_range():
+    d = np.load(SLICES[0])
+    out = preprocess.homomorphic_filter(preprocess.window_normalize(d["hu"]))
+    assert out.shape == d["hu"].shape and out.dtype == np.uint8
+    flat = np.full((64, 64), 100, np.uint8)
+    assert preprocess.homomorphic_filter(np.full((63, 65), 100, np.uint8)).shape == (63, 65)  # odd sizes
+    assert np.abs(preprocess.homomorphic_filter(flat).astype(int) - 100).max() <= 1  # a flat image stays flat
+
+
+def test_phase1_outputs_exist():
+    """Histogram + edge figures and the PSNR/CNR table (with the homomorphic row) are produced by run_pipeline.py."""
+    import os
+    import pandas as pd
+    for name in ("phase1_histograms.png", "phase1_edges.png", "phase1_chain_check.csv"):
+        assert os.path.getsize(f"results/{name}") > 0, name
+    assert "homomorphic" in pd.read_csv("results/phase1_psnr_cnr.csv")["method"].values
+    sweep = pd.read_csv("results/parameter_sweep.csv")
+    assert {"homomorphic (gamma_low)", "homomorphic (gamma_high)", "homomorphic (cutoff)", "homomorphic (c)"} <= set(sweep["filter"])
+
+
+def test_app_phase1_tab_has_all_four_steps():
+    tk = pytest.importorskip("tkinter")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    from matplotlib.text import Text
+    import app
+    a = app.App(root)
+    a.set_files(SLICES[:1])
+    text = " ".join(t.get_text() for t in a.canvases[app.TABS[1]].figure.findobj(Text))
+    for step in ("Step 1", "Step 2a", "Step 2b", "Step 3", "Step 4"):
+        assert step in text, step
+    root.destroy()

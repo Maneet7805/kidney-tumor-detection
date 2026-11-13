@@ -31,6 +31,7 @@ def phase1_table(slices):
         variants["contrast_clahe"] = preprocess.enhance_contrast(base, "clahe")
         variants["contrast_he"] = preprocess.enhance_contrast(base, "he")
         variants["butterworth"] = preprocess.butterworth_lowpass(base)
+        variants["homomorphic"] = preprocess.homomorphic_filter(base)
         variants["full_chain"] = preprocess.enhance(d["hu"])
         variants["original_window"] = base
         for name, img in variants.items():
@@ -38,6 +39,26 @@ def phase1_table(slices):
     table = pd.DataFrame(rows).replace(np.inf, np.nan).groupby("method").mean().round(3)
     table.to_csv(f"{OUT}/phase1_psnr_cnr.csv")
     return table
+
+
+def chain_check(slices):
+    """Does adding the homomorphic filter to the end of the final chain help? Training cases only."""
+    test_cases = json.load(open(f"{OUT}/metrics.json"))["test_cases"]
+    train = [d for d in slices if int(d["case"]) not in test_cases]
+    chains = {"window-anisotropic-butterworth (final)": preprocess.enhance,
+              "... + homomorphic": lambda hu: preprocess.homomorphic_filter(preprocess.enhance(hu))}
+    rows = []
+    for name, chain in chains.items():
+        out = [chain(d["hu"]) for d in train]
+        row = {"chain": name, "n_train_slices": len(train)}
+        for m in METHODS:
+            row[f"dice_{m}"] = np.mean([segment.dice(segment.segment_tumor(e, d["kidney"], m), d["tumor"]) for e, d in zip(out, train)])
+        row["kidney_cnr"] = np.mean([preprocess.cnr(e, d["kidney"], ndi.binary_dilation(d["kidney"], iterations=15) & ~ndi.binary_dilation(d["kidney"], iterations=4))
+                                     for e, d in zip(out, train)])
+        rows.append(row)
+    table = pd.DataFrame(rows).round(4)
+    table.to_csv(f"{OUT}/phase1_chain_check.csv", index=False)
+    print(table.to_string(index=False))
 
 
 def phase2_table(slices):
@@ -79,6 +100,65 @@ def save_figures(slices, method):
     fig.savefig(f"{OUT}/overlays_{method}.png", dpi=120, bbox_inches="tight"); plt.close(fig)
 
 
+def save_histograms(slices):
+    """Step 2 evidence: grey-level and cumulative histograms of windowed / CLAHE / HE for one slice."""
+    base = preprocess.window_normalize(max(slices, key=lambda s: s["tumor"].sum())["hu"])
+    panels = {"Windowed (no enhancement)": base, "CLAHE (local, clip limit 3)": preprocess.enhance_contrast(base, "clahe"),
+              "Histogram equalization (global)": preprocess.enhance_contrast(base, "he")}
+    fig, axes = plt.subplots(3, 3, figsize=(13, 10))
+    for col, (title, img) in enumerate(panels.items()):
+        counts = np.bincount(img.ravel(), minlength=256)
+        axes[0, col].imshow(img, cmap="gray"); axes[0, col].set_title(title); axes[0, col].axis("off")
+        axes[1, col].bar(range(256), counts, width=1.0)
+        axes[1, col].set_yscale("log")  # the black background pixels would otherwise flatten everything else
+        axes[1, col].set_ylabel("grey-level histogram\n(pixel count, log scale)")
+        axes[2, col].plot(np.cumsum(counts) / counts.sum())  # HE aims for a straight diagonal here
+        axes[2, col].set_ylabel("cumulative histogram\n(fraction of pixels)")
+        for row in (1, 2):
+            axes[row, col].set_xlabel("grey level (0-255)"); axes[row, col].set_xlim(-1, 256); axes[row, col].grid(alpha=0.3)
+    fig.suptitle("Step 2: contrast enhancement on the windowed soft-tissue band (the spike at grey level 0 is the black air background)")
+    fig.subplots_adjust(hspace=0.35, wspace=0.35)
+    fig.savefig(f"{OUT}/phase1_histograms.png", dpi=120, bbox_inches="tight"); plt.close(fig)
+
+
+def save_edge_figure(slices):
+    """Step 2 evidence: does the filter keep the kidney border sharp? Crop + 1-D profile across the border.
+    Gaussian and median strengths are matched to the anisotropic filter's noise level in flat kidney tissue,
+    so the only difference left is what each filter does to the edge."""
+    d = max(slices, key=lambda s: s["kidney"].sum())
+    base = preprocess.window_normalize(d["hu"])
+    grad_y, grad_x = np.gradient(cv2.GaussianBlur(base.astype(np.float32), (0, 0), 1))
+    border = d["kidney"] & ~ndi.binary_erosion(d["kidney"], iterations=2)
+    y, x = np.unravel_index(np.argmax(np.where(border, np.hypot(grad_y, grad_x), 0)), base.shape)  # sharpest border point
+    ny, nx = grad_y[y, x], grad_x[y, x]
+    ny, nx = ny / np.hypot(ny, nx), nx / np.hypot(ny, nx)  # unit vector across the border
+
+    flat = ndi.binary_erosion(d["kidney"] & ~ndi.binary_dilation(d["tumor"], iterations=3), iterations=8)
+    noise = lambda im: im[flat].std()
+    aniso = preprocess.denoise(base, "anisotropic")
+    sigma = min([0.5, 1, 1.5, 2, 3, 4], key=lambda s: abs(noise(cv2.GaussianBlur(base, (0, 0), s)) - noise(aniso)))
+    kernel = min([3, 5, 7, 9, 11, 13], key=lambda k: abs(noise(cv2.medianBlur(base, k)) - noise(aniso)))
+    panels = {"windowed": base, "anisotropic": aniso, f"Gaussian (sigma {sigma})": cv2.GaussianBlur(base, (0, 0), sigma),
+              f"median ({kernel}x{kernel})": cv2.medianBlur(base, kernel)}
+
+    t = np.arange(-15, 16)
+    fig = plt.figure(figsize=(14, 8))
+    grid = fig.add_gridspec(2, 4, height_ratios=[1, 1.1])
+    prof_ax = fig.add_subplot(grid[1, :])
+    for col, (title, img) in enumerate(panels.items()):
+        ax = fig.add_subplot(grid[0, col])
+        ax.imshow(img, cmap="gray", vmin=0, vmax=255)
+        ax.plot([x - 15 * nx, x + 15 * nx], [y - 15 * ny, y + 15 * ny], "r-", lw=1)
+        ax.set_xlim(x - 25, x + 25); ax.set_ylim(y + 25, y - 25); ax.axis("off")
+        ax.set_title(f"{title}\nflat-tissue noise (std) {noise(img):.1f}", fontsize=10)
+        prof_ax.plot(t, ndi.map_coordinates(img.astype(float), [y + t * ny, x + t * nx], order=1), label=title)
+    prof_ax.set_xlabel("position along the red line (pixels, 0 = kidney border)"); prof_ax.set_ylabel("grey level")
+    prof_ax.set_title("Intensity profile across the kidney border: a steep step = edge kept, a gentle ramp = edge blurred")
+    prof_ax.legend(); prof_ax.grid(alpha=0.3)
+    fig.suptitle(f"Step 2: edge preservation (case {int(d['case'])}, slice {int(d['z'])}), filters matched to equal noise reduction")
+    fig.savefig(f"{OUT}/phase1_edges.png", dpi=120, bbox_inches="tight"); plt.close(fig)
+
+
 def save_confusion_matrix(cm):
     """Confusion matrix figure for the held-out test regions."""
     fig, ax = plt.subplots(figsize=(4, 4))
@@ -101,11 +181,17 @@ def parameter_sweep(slices):
         "gaussian (sigma)": (lambda b, k: cv2.GaussianBlur(b, (0, 0), k), [0.5, 1, 1.5, 2.5, 4]),
         "median (kernel)": (lambda b, k: cv2.medianBlur(b, k), [3, 5, 7, 9]),
         "butterworth (cutoff)": (lambda b, k: preprocess.butterworth_lowpass(b, cutoff=k), [20, 40, 60, 100, 150]),
+        # homomorphic: one parameter varied at a time around the defaults gL 0.5, gH 1.5, D0 6, c 1
+        "homomorphic (gamma_low)": (lambda b, k: preprocess.homomorphic_filter(b, gamma_low=k), [0.3, 0.5, 0.7, 1.0]),
+        "homomorphic (gamma_high)": (lambda b, k: preprocess.homomorphic_filter(b, gamma_high=k), [1.0, 1.5, 2.0, 3.0]),
+        "homomorphic (cutoff)": (lambda b, k: preprocess.homomorphic_filter(b, cutoff=k), [2, 6, 15, 30, 60]),
+        "homomorphic (c)": (lambda b, k: preprocess.homomorphic_filter(b, c=k), [0.5, 1, 2, 5]),
         "clahe (clip limit)": (lambda b, k: cv2.createCLAHE(clipLimit=k, tileGridSize=(8, 8)).apply(b), [1, 2, 3, 5, 8]),
         "he (no setting)": (lambda b, k: cv2.equalizeHist(b), [0]),
         "none (windowed only)": (lambda b, k: b, [0]),
     }
-    usable = [d for d in slices if d["tumor"].sum() >= 100 and (d["kidney"] & ~ndi.binary_dilation(d["tumor"], iterations=3)).sum() >= 100]
+    test_cases = json.load(open(f"{OUT}/metrics.json"))["test_cases"]  # held-out patients never influence a setting
+    usable = [d for d in slices if int(d["case"]) not in test_cases and d["tumor"].sum() >= 100 and (d["kidney"] & ~ndi.binary_dilation(d["tumor"], iterations=3)).sum() >= 100]
     rows = []
     for name, (apply, values) in grid.items():
         for v in values:
@@ -243,6 +329,9 @@ def main():
     print(json.dumps(result, indent=2, default=float))
     json.dump(result, open(f"{OUT}/metrics.json", "w"), indent=2, default=float)
     save_figures(slices, best)
+    save_histograms(slices)
+    save_edge_figure(slices)
+    chain_check(slices)
     parameter_sweep(slices)
     phase2_sweep(slices)  # needs metrics.json for the held-out case list
     morphology_demo(slices)

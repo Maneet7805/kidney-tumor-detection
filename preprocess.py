@@ -66,9 +66,33 @@ def butterworth_lowpass(img, cutoff=60, order=2):
     return np.clip(filtered, 0, 255).astype(np.uint8)
 
 
+def homomorphic_filter(img, gamma_low=0.5, gamma_high=1.5, cutoff=6, c=1.0):
+    """Homomorphic filter: corrects slow illumination gradients across the abdomen.
+
+    An image is illumination x detail. The log turns that product into a sum, so one
+    frequency-domain filter can treat the two parts differently:
+    H = (gH - gL) * (1 - exp(-c * D^2 / D0^2)) + gL   (Gaussian high-frequency emphasis)
+    gamma_low  (gL < 1) damps low frequencies = the smooth brightness gradient.
+    gamma_high (gH > 1) lifts high frequencies = edges and texture.
+    cutoff     (D0)     frequency radius that separates "gradient" from "detail" (6 px: only the very slowest trends; 30+ starts flattening organ contrast and Dice collapses).
+    c                   steepness of the transition between gL and gH.
+    Defaults are the sweep winners on training cases (results/parameter_sweep.csv).
+    """
+    rows, cols = img.shape
+    v, u = np.ogrid[:rows, :cols]
+    d2 = (u - cols // 2) ** 2 + (v - rows // 2) ** 2
+    h = (gamma_high - gamma_low) * (1 - np.exp(-c * d2 / cutoff ** 2)) + gamma_low
+    h[rows // 2, cols // 2] = 1  # DC gain 1 keeps the mean of the log image, so overall brightness stays about the same
+    spectrum = np.fft.fftshift(np.fft.fft2(np.log1p(img.astype(np.float64))))  # log1p: avoids log(0) on black pixels
+    out = np.expm1(np.real(np.fft.ifft2(np.fft.ifftshift(spectrum * h))))
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def enhance(hu):
     """Final Phase 1 chain: window -> anisotropic diffusion -> Butterworth.
 
+    Homomorphic is compared but not chained: on 48 training slices adding it lifts Otsu Dice (0.516 -> 0.531)
+    but lowers region-growing Dice, our best method (0.555 -> 0.512); see results/phase1_chain_check.csv.
     CLAHE is left out: on 45 training slices it amplifies noise and lowers Dice
     (Otsu 0.347 with CLAHE vs 0.390 without; CLAHE alone is the lowest in results/parameter_sweep.csv).
     """

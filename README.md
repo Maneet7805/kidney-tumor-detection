@@ -19,7 +19,7 @@ Raw CT slice (HU)
 
 | Phase | Methods compared | Evaluation |
 |---|---|---|
-| 1. Enhancement | Anisotropic diffusion vs Gaussian vs Median; CLAHE vs Histogram Equalization (both compared, neither in the final chain); Butterworth low-pass on the 2D DFT | PSNR, CNR |
+| 1. Enhancement | Anisotropic diffusion vs Gaussian vs Median; CLAHE vs Histogram Equalization (both compared, neither in the final chain); Butterworth low-pass and homomorphic filter on the 2D DFT (homomorphic compared only) | PSNR, CNR |
 | 2. Segmentation | Strategy A: Multi-Otsu. Strategy B: seeded region growing | Dice, IoU vs ground truth |
 | 3. Classification | 15 features (6 shape, 5 GLCM over 4 angles, 4 first-order HU) -> Random Forest | 70/30 split by patient, 5-fold CV, confusion matrix, accuracy, recall, specificity, F1 |
 
@@ -51,7 +51,12 @@ Dice on the 4 held-out test patients (region growing): 0.608 (0.290 before the P
 | CLAHE | 20.6 | 1.76 |
 | Histogram Equalization | 19.3 | 1.61 |
 | Butterworth low-pass | 25.5 | 2.76 |
+| Homomorphic (compared, not in chain) | 14.0 | 2.15 |
 | **Final chain** (window, diffusion, Butterworth) | 25.1 | 2.88 |
+
+Homomorphic filter (`preprocess.homomorphic_filter`, gamma_low 0.5, gamma_high 1.5, cutoff 6, c 1; chosen by the `parameter_sweep` on training cases only) corrects the slow brightness gradient across the abdomen, but it is not in the final chain. Adding it at the end of the chain (training slices, `results/phase1_chain_check.csv`): Otsu Dice 0.516 -> 0.531, region-growing Dice (our best method) 0.555 -> 0.512, kidney CNR 2.09 -> 2.17. It hurts the best method, so it is reported only. Its PSNR is low because it deliberately changes the low-frequency brightness.
+
+Evidence figures: `results/phase1_histograms.png` (grey-level and cumulative histograms of windowed / CLAHE / HE) and `results/phase1_edges.png` (zoomed kidney border and 1-D intensity profile for windowed / anisotropic / Gaussian / median, strengths matched to equal noise reduction).
 
 Anisotropic diffusion keeps the most structure (highest PSNR) while still raising CNR. CLAHE is not in the final chain: it amplifies noise (lowest PSNR/CNR of the compared steps) and, on the 45 training slices, lowers Dice (Otsu 0.347 with CLAHE vs 0.390 without; region growing 0.244 vs 0.410).
 
@@ -86,13 +91,13 @@ The 72 extracted slices are already in `data/slices`, so you can skip the downlo
 
 ## Prototype app
 
-`python app.py` opens a window to load one slice or a folder, pick the segmentation method, and view the mask, tumor overlay, kidney overlay and a combined view (predicted red, ground truth green), with Dice per slice and the classifier metrics. It has one tab per phase: Overview, Phase 1 Enhancement (original -> enhanced with every compared algorithm), Phase 2 Segmentation (both strategies with Dice/IoU), Phase 3 Recognition (features, classifier, diagnostic class). Run `run_pipeline.py` first so the app can load the classifier (rebuilt from the saved feature table).
+`python app.py` opens a window to load one slice or a folder, pick the segmentation method, and view the mask, tumor overlay, kidney overlay and a combined view (predicted red, ground truth green), with Dice per slice and the classifier metrics. It has one tab per phase: Overview, Phase 1 Enhancement (the brief's four steps in order: normalization, spatial filtering and contrast with histograms, frequency domain, PSNR/CNR table; green titles = final chain), Phase 2 Segmentation (both strategies with Dice/IoU), Phase 3 Recognition (features, classifier, diagnostic class). Run `run_pipeline.py` first so the app can load the classifier (rebuilt from the saved feature table).
 
 ## Repository layout
 
 | File | Purpose |
 |---|---|
-| `preprocess.py` | Phase 1: windowing, denoising, CLAHE/HE, Butterworth, PSNR, CNR |
+| `preprocess.py` | Phase 1: windowing, denoising, CLAHE/HE, Butterworth, homomorphic, PSNR, CNR |
 | `segment.py` | Phase 2: morphology, Multi-Otsu, region growing, Dice, IoU |
 | `classify.py` | Phase 3: feature extraction, Random Forest, evaluation |
 | `run_pipeline.py` | End-to-end run, tables and figures |

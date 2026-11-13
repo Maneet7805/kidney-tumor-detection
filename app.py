@@ -23,6 +23,7 @@ import segment
 
 METRICS_FILE = os.path.join("results", "metrics.json")
 FEATURE_FILE = os.path.join("results", "glcm_feature_table.csv")
+PHASE1_FILE = os.path.join("results", "phase1_psnr_cnr.csv")
 TABS = ["Overview", "Phase 1: Enhancement", "Phase 2: Segmentation", "Phase 3: Recognition"]
 
 
@@ -171,36 +172,66 @@ class App:
         for ax in fig.axes:
             ax.axis("off")
 
-    # ---------- Phase 1: original -> enhanced, with every compared algorithm ----------
+    # ---------- Phase 1: the four steps of the brief, in order ----------
     def draw_phase1(self, fig, c):
-        s, base, box = c["s"], c["base"], c["box"]
-        roi = s["kidney"]
-        ring = np.zeros_like(roi)
-        ring[box] = True
-        ring &= ~roi
+        """Green titles = methods in the final chain (window -> anisotropic -> Butterworth); black = compared only."""
+        base, box = c["base"], c["box"]
+        gs = fig.add_gridspec(10, 4, height_ratios=[0.3, 3, 0.3, 3, 0.3, 3, 0.3, 3, 0.3, 2])
 
-        def score(img):  # PSNR vs the windowed image, CNR between kidney and surrounding tissue
-            return f"PSNR {preprocess.psnr(base, img):.1f} dB | CNR {preprocess.cnr(img, roi, ring):.2f}"
-
-        raw = np.clip(s["hu"], -1000, 1000)
-        panels = [
-            ("ORIGINAL raw CT (full HU range)", raw, ""),
-            ("Step 1: window [-160,240] HU -> 0-255", base, f"CNR {preprocess.cnr(base, roi, ring):.2f}"),
-            ("Step 2a: anisotropic diffusion (CHOSEN)", preprocess.denoise(base, "anisotropic"), None),
-            ("Step 2b: Gaussian", preprocess.denoise(base, "gaussian"), None),
-            ("Step 2c: median", preprocess.denoise(base, "median"), None),
-            ("Step 3a: CLAHE (compared, not in final chain)", preprocess.enhance_contrast(base, "clahe"), None),
-            ("Step 3b: histogram equalization", preprocess.enhance_contrast(base, "he"), None),
-            ("Step 4a: log-magnitude 2D DFT", preprocess.log_spectrum(base), "full image"),
-            ("Step 4b: Butterworth low-pass (CHOSEN)", preprocess.butterworth_lowpass(base), None),
-            ("PHASE 1 OUTPUT (chain: 1 -> 2a -> 4b)", c["enhanced"], None),
-        ]
-        for i, (title, img, note) in enumerate(panels, start=1):
-            ax = fig.add_subplot(3, 4, i)
-            ax.imshow(img if note in ("full image", "") else img[box], cmap="gray")
-            note = score(img) if note is None else ("" if note == "full image" else note)
-            ax.set_title(f"{title}\n{note}".strip(), fontsize=8)
+        def heading(row, text):
+            ax = fig.add_subplot(gs[row, :])
             ax.axis("off")
+            ax.text(0, 0.5, text, fontweight="bold", fontsize=10, va="center")
+
+        def image(row, col, title, img, final=False, whole=False):  # crops to the kidneys unless whole=True
+            ax = fig.add_subplot(gs[row, col])
+            ax.imshow(img if whole else img[box], cmap="gray")
+            ax.set_title(title, fontsize=8, color="green" if final else "black")
+            ax.axis("off")
+
+        def histogram(row, col, img):
+            ax = fig.add_subplot(gs[row, col])
+            ax.hist(img.ravel(), bins=256, range=(0, 255), log=True)  # log: the black background would hide the rest
+            ax.set_title("histogram (log count)", fontsize=8)
+            ax.tick_params(labelsize=7)
+
+        heading(0, "Step 1: normalization (clip to the soft-tissue window, rescale to 0-255)")
+        image(1, 0, "Original CT (full HU range)", np.clip(c["s"]["hu"], -1000, 1000), whole=True)
+        image(1, 1, "Windowed [-160, 240] HU -> 0-255 (final chain)", base, final=True, whole=True)
+
+        heading(2, "Step 2a: spatial filtering (edge-preserving vs smoothing)")
+        image(3, 0, "Windowed", base, final=True)
+        image(3, 1, "Anisotropic diffusion (final chain)", preprocess.denoise(base, "anisotropic"), final=True)
+        image(3, 2, "Gaussian", preprocess.denoise(base, "gaussian"))
+        image(3, 3, "Median", preprocess.denoise(base, "median"))
+
+        heading(4, "Step 2b: contrast enhancement (compared, not in the final chain)")
+        for col, (name, method) in enumerate([("CLAHE", "clahe"), ("Histogram equalization", "he")]):
+            img = preprocess.enhance_contrast(base, method)
+            image(5, 2 * col, name, img)
+            histogram(5, 2 * col + 1, img)
+
+        heading(6, "Step 3: frequency domain (2D DFT)")
+        image(7, 0, "Log-magnitude spectrum", preprocess.log_spectrum(base), whole=True)
+        image(7, 1, "Butterworth low-pass (final chain)", preprocess.butterworth_lowpass(base), final=True)
+        image(7, 2, "Homomorphic (compared)", preprocess.homomorphic_filter(base))
+        image(7, 3, "PHASE 1 OUTPUT (final chain)", c["enhanced"], final=True)
+
+        heading(8, "Step 4: validation, mean over all slices (PSNR vs windowed image; CNR kidney vs surrounding tissue)")
+        ax = fig.add_subplot(gs[9, :])
+        ax.axis("off")
+        table = load_optional(lambda p: pd.read_csv(p, index_col="method"), PHASE1_FILE)
+        if table is None:
+            ax.text(0.5, 0.5, "run run_pipeline.py to create results/phase1_psnr_cnr.csv", ha="center")
+            return
+        names = {"original_window": "windowed", "denoise_anisotropic": "anisotropic", "denoise_gaussian": "Gaussian",
+                 "denoise_median": "median", "contrast_clahe": "CLAHE", "contrast_he": "HE",
+                 "butterworth": "Butterworth", "homomorphic": "homomorphic", "full_chain": "final chain"}
+        table = table.reindex(list(names))
+        cells = [[f"{v:.1f}" if v == v else "-" for v in table["psnr"]], [f"{v:.2f}" for v in table["cnr"]]]
+        t = ax.table(cellText=cells, rowLabels=["PSNR (dB)", "CNR"], colLabels=list(names.values()), loc="center")
+        t.auto_set_font_size(False)
+        t.set_fontsize(8)
 
     # ---------- Phase 2: both segmentation strategies and their overlap scores ----------
     def draw_phase2(self, fig, c):
