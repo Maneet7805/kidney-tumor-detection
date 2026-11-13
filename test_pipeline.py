@@ -135,6 +135,7 @@ def test_homomorphic_filter_shape_dtype_range():
     out = preprocess.homomorphic_filter(preprocess.window_normalize(d["hu"]))
     assert out.shape == d["hu"].shape and out.dtype == np.uint8
     flat = np.full((64, 64), 100, np.uint8)
+    assert preprocess.homomorphic_filter(np.full((63, 65), 100, np.uint8)).shape == (63, 65)  # odd sizes
     assert np.abs(preprocess.homomorphic_filter(flat).astype(int) - 100).max() <= 1  # a flat image stays flat
 
 

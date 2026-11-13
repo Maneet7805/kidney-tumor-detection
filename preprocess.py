@@ -80,9 +80,9 @@ def homomorphic_filter(img, gamma_low=0.5, gamma_high=1.5, cutoff=6, c=1.0):
     """
     rows, cols = img.shape
     v, u = np.ogrid[:rows, :cols]
-    d2 = (u - cols / 2) ** 2 + (v - rows / 2) ** 2
+    d2 = (u - cols // 2) ** 2 + (v - rows // 2) ** 2
     h = (gamma_high - gamma_low) * (1 - np.exp(-c * d2 / cutoff ** 2)) + gamma_low
-    h[rows // 2, cols // 2] = 1  # keep the mean brightness: the filter should only reshape, not shift, the image
+    h[rows // 2, cols // 2] = 1  # DC gain 1 keeps the mean of the log image, so overall brightness stays about the same
     spectrum = np.fft.fftshift(np.fft.fft2(np.log1p(img.astype(np.float64))))  # log1p: avoids log(0) on black pixels
     out = np.expm1(np.real(np.fft.ifft2(np.fft.ifftshift(spectrum * h))))
     return np.clip(out, 0, 255).astype(np.uint8)
